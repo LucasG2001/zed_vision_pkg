@@ -27,6 +27,7 @@ import sys
 import pyzed.sl as sl
 import time
 import ogl_viewer2.viewer as gl
+import cv_viewer.tracking_viewer as cv_viewer
 import numpy as np
 
 if __name__ == "__main__":
@@ -157,13 +158,29 @@ if __name__ == "__main__":
 
     # Create ZED objects filled in the main loop
     bodies = sl.Bodies()
-    single_bodies = [sl.Bodies]
+    image = sl.Mat()
+    single_bodies = sl.Bodies()
+
+    # Get ZED camera information
+    camera_info = zed.get_camera_information()
+    # 2D viewer utilities
+    display_resolution = sl.Resolution(min(camera_info.camera_configuration.resolution.width, 1280), min(camera_info.camera_configuration.resolution.height, 720))
+    image_scale = [display_resolution.width / camera_info.camera_configuration.resolution.width
+                 , display_resolution.height / camera_info.camera_configuration.resolution.height]
 
     while (viewer.is_available()):
-        for serial in senders:
+        for i, serial in enumerate(senders):
             zed = senders[serial]
             if zed.grab() == sl.ERROR_CODE.SUCCESS:
                 zed.retrieve_bodies(bodies)
+                if (i==0):
+                    zed.retrieve_image(image, sl.VIEW.LEFT, sl.MEM.CPU, display_resolution)
+                    # Update OCV view
+                    image_left_ocv = image.get_data()
+                     # Update OCV view
+                    cv_viewer.render_2D(image_left_ocv,image_scale, bodies.body_list, body_tracking_parameters.enable_tracking, body_tracking_parameters.body_format)
+                    cv2.imshow("ZED | 2D View", image_left_ocv)
+                    cv2.waitKey(10) 
 
         if fusion.process() == sl.FUSION_ERROR_CODE.SUCCESS:
             
@@ -173,6 +190,9 @@ if __name__ == "__main__":
             # for cam in camera_identifiers:
             #     fusion.retrieveBodies(single_bodies, rt, cam); 
             viewer.update_bodies(bodies)
+            # cam = camera_identifiers[0]
+            # fusion.retrieve_bodies(single_bodies, rt, cam)
+            
             
     for sender in senders:
         senders[sender].close()
