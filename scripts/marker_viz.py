@@ -29,7 +29,7 @@ def create_markers(left_hand, right_hand, reference_frame="map"):
    
     right_marker.id = 2
     right_marker.header.frame_id = reference_frame # Specify the frame in which the marker will be displayed
-    right_marker.type = Marker.SPHERE  # Set the marker type to points
+    right_marker.type = Marker.SPHERE  # Set the marker type to pointsleft_marker
     right_marker.action = Marker.ADD  # Set the action to add the marker
     # Define the color of the marker
     right_marker.color.r = 0.0  # Red

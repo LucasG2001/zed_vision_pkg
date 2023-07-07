@@ -41,6 +41,22 @@ from marker_viz import create_markers
 
 
 if __name__ == "__main__":
+    
+    
+    T_0S = np.array([[0, 0, -1, 0.18], 
+                     [0, 1, 0, -0.17],
+                     [1, 0, 0, 0.016],
+                     [0, 0, 0, 1.0]])
+    
+
+    
+    T_SC =np.array([[-0.85601123,  0.40436782, -0.32207365,  0.54878193],
+                    [-0.51499203, -0.72130533, 0.46314342, -0.35858124],
+                    [-0.04503314,  0.56232133,  0.82569167, -0.99236728],
+                    [ 0.,          0.,        0.,          1.        ]])
+    
+    # homogenous transform from body frame to camera frame such that 0_P (robot base coordinate system position) = T_0C * C_P (camera coordinate sys. pos.)
+    T_0C = np.matmul(np.eye(4,4), T_SC) 
 
     #  initalize node
     rospy.init_node("body_tracking_node")
@@ -59,10 +75,9 @@ if __name__ == "__main__":
 
     # Create a InitParameters object and set configuration parameters
     init_params = sl.InitParameters()
-    init_params.camera_resolution = sl.RESOLUTION.HD1080  # Use HD1080 video mode
+    init_params.camera_resolution = sl.RESOLUTION.HD720  # Use 720 video mode
     init_params.coordinate_units = sl.UNIT.METER          # Set coordinate units
-    init_params.depth_mode = sl.DEPTH_MODE.ULTRA
-    init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Y_UP
+    init_params.coordinate_system = sl.COORDINATE_SYSTEM.IMAGE
     
     # If applicable, use the SVO given as parameter
     # Otherwise use ZED live stream
@@ -86,7 +101,7 @@ if __name__ == "__main__":
     body_param = sl.BodyTrackingParameters()
     body_param.enable_tracking = True                # Track people across images flow
     body_param.enable_body_fitting = False            # Smooth skeleton move
-    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_FAST 
+    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_MEDIUM 
     body_param.body_format = sl.BODY_FORMAT.BODY_18  # Choose the BODY_FORMAT you wish to use
 
     # Enable Object Detection module
@@ -113,23 +128,36 @@ if __name__ == "__main__":
 
     left_hand_msg = Point()
     right_hand_msg = Point()
+    camera_pose = sl.Pose()
+    py_translation = sl.Translation()
 
     while viewer.is_available():
+       
         # Grab an image
         if zed.grab() == sl.ERROR_CODE.SUCCESS:
             # Retrieve left image
             zed.retrieve_image(image, sl.VIEW.LEFT, sl.MEM.CPU, display_resolution)
+            # get camera position in world coordinate frame
+            # rotation = camera_pose.get_rotation_vector()
+            # translation = camera_pose.get_translation(py_translation.get())
+            # print("camera is at ", translation, "\n")
+            # print("and is rotated by ", rotation, "\n")
             # Retrieve bodies
             zed.retrieve_bodies(bodies, body_runtime_param)
             for element in bodies.body_list:
-                print("{} {}".format(element.id, element.position))
+                # print("{} {}".format(element.id, element.position))
                 print("----------------------")
+
                 right_wrist = element.keypoint[3]
+                left_wrist = element.keypoint[6]
                 if (math.isnan(right_wrist[0])):
                     right_wrist = [100, 100, 100]
-                left_wrist = element.keypoint[6]
                 if (math.isnan(left_wrist[0])):
                     left_wrist = [100, 100, 100]
+
+                # transform hand position to base frame
+                right_wrist = np.matmul(T_0C, np.transpose(np.append(right_wrist, [1], axis=0)))[:3,]
+                left_wrist = np.matmul(T_0C, np.transpose(np.append(right_wrist, [1], axis=0)))[:3,]
                 print("left hand is at {}".format(left_wrist))
                 print("right hand is at {}".format(right_wrist))
                 left_hand_msg.x = left_wrist[0]
@@ -138,7 +166,7 @@ if __name__ == "__main__":
                 right_hand_msg.x = right_wrist[0]
                 right_hand_msg.y = right_wrist[1]
                 right_hand_msg.z = right_wrist[2]
-                
+
                 # publish positions of the two hands
                 left_hand_publisher.publish(left_hand_msg)
                 right_hand_publisher.publish(right_hand_msg)
