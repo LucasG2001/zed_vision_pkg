@@ -42,27 +42,42 @@ from marker_viz import create_markers
 
 if __name__ == "__main__":
     
-    
-    T_0S = np.array([[0, 0, -1, 0.18], 
-                     [0, 1, 0, -0.17],
-                     [1, 0, 0, 0.016],
+    T_0S = np.array([[-1, 0, 0, 0.41],
+                     [0, 1, 0, 0.0],
+                     [0, 0, -1, 0.006],
+                     [0, 0, 0, 1]])
+    """
+      
+    T_Y_up_w = np.array([[0, 0, 0, 0.0], # transform from Y up right handed cs to world cs
+                     [0, 0, 0, -1.5922],
+                     [0, 0, 0, 0.0],
                      [0, 0, 0, 1.0]])
     
-
+    T_Y_up_w = np.eye(4,4)
+     
+    T_Y_dwn_Y_up = np.array([[1, 0, 0, 0.0], # transform  from default cs in zed to right handed y up
+                         [0, -1, 0, 0.0],
+                         [0, 0, -1, 0.0],
+                         [0, 0, 0, 1.0]])
     
-    T_SC =np.array([[-0.85601123,  0.40436782, -0.32207365,  0.54878193],
-                    [-0.51499203, -0.72130533, 0.46314342, -0.35858124],
-                    [-0.04503314,  0.56232133,  0.82569167, -0.99236728],
-                    [ 0.,          0.,        0.,          1.        ]])
+    T_Y_dwn_Y_up = np.eye(4,4)
     
-    # homogenous transform from body frame to camera frame such that 0_P (robot base coordinate system position) = T_0C * C_P (camera coordinate sys. pos.)
-    T_0C = np.matmul(np.eye(4,4), T_SC) 
+    """
+    
+    T_SC =  np.array([[ 0.87719505,  0.32564224, -0.3528257,   0.26605627],
+             [-0.47987835,  0.6186104,  -0.62212373,  0.61956785],
+             [ 0.01567189,  0.71503728,  0.69891064, -1.00722683],
+             [ 0.,          0.,          0.,          1.        ]])
+    
+    Transform = T_0S @ T_SC 
+   
+    print(Transform.dot(np.transpose([[0, 0, 0, 1]])))
 
     #  initalize node
     rospy.init_node("body_tracking_node")
     # initialze publisher for hand keypoint
-    left_hand_publisher = rospy.Publisher('left_hand', Point, queue_size=10)
-    right_hand_publisher = rospy.Publisher('right_hand', Point, queue_size=10)
+    left_hand_publisher = rospy.Publisher('cartesian_impedance_controller/left_hand', Point, queue_size=10)
+    right_hand_publisher = rospy.Publisher('cartesian_impedance_controller/right_hand', Point, queue_size=10)
     # Create a publisher for the "keypoint_marker" topic
     marker_publisher = rospy.Publisher('keypoint_marker', MarkerArray, queue_size=10)
     # Create a MarkerArray message object
@@ -100,15 +115,15 @@ if __name__ == "__main__":
     
     body_param = sl.BodyTrackingParameters()
     body_param.enable_tracking = True                # Track people across images flow
-    body_param.enable_body_fitting = False            # Smooth skeleton move
-    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_MEDIUM 
+    body_param.enable_body_fitting = True            # Smooth skeleton move
+    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_ACCURATE 
     body_param.body_format = sl.BODY_FORMAT.BODY_18  # Choose the BODY_FORMAT you wish to use
 
     # Enable Object Detection module
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
-    body_runtime_param.detection_confidence_threshold = 40
+    body_runtime_param.detection_confidence_threshold = 35
 
     # Get ZED camera information
     camera_info = zed.get_camera_information()
@@ -128,8 +143,12 @@ if __name__ == "__main__":
 
     left_hand_msg = Point()
     right_hand_msg = Point()
-    camera_pose = sl.Pose()
-    py_translation = sl.Translation()
+    # camera_pose = sl.Pose()
+    # py_translation = sl.Translation()
+
+    # init 
+    right_wrist = np.array([0, 0, 0])
+    left_wrist = np.array([0, 0, 0])
 
     while viewer.is_available():
        
@@ -146,26 +165,27 @@ if __name__ == "__main__":
             zed.retrieve_bodies(bodies, body_runtime_param)
             for element in bodies.body_list:
                 # print("{} {}".format(element.id, element.position))
+                if(len(bodies.body_list)> 1):
+                    print("WARNING: more than one body detected!")
                 print("----------------------")
 
-                right_wrist = element.keypoint[3]
-                left_wrist = element.keypoint[6]
-                if (math.isnan(right_wrist[0])):
-                    right_wrist = [100, 100, 100]
-                if (math.isnan(left_wrist[0])):
-                    left_wrist = [100, 100, 100]
+                # update only if not nan, else use last value
+                if (not math.isnan(element.keypoint[4][0])):
+                    right_wrist = np.copy(element.keypoint[4])
+                if (not math.isnan(element.keypoint[7][0])):
+                    left_wrist = np.copy(element.keypoint[7])
 
                 # transform hand position to base frame
-                right_wrist = np.matmul(T_0C, np.transpose(np.append(right_wrist, [1], axis=0)))[:3,]
-                left_wrist = np.matmul(T_0C, np.transpose(np.append(right_wrist, [1], axis=0)))[:3,]
-                print("left hand is at {}".format(left_wrist))
-                print("right hand is at {}".format(right_wrist))
-                left_hand_msg.x = left_wrist[0]
-                left_hand_msg.y = left_wrist[1]
-                left_hand_msg.z = left_wrist[2]
-                right_hand_msg.x = right_wrist[0]
-                right_hand_msg.y = right_wrist[1]
-                right_hand_msg.z = right_wrist[2]
+                right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3,]
+                left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3,]
+                print("left hand is at {}".format(left_wrist_transformed))
+                print("right hand is at {}".format(right_wrist_transformed))
+                left_hand_msg.x = left_wrist_transformed[0]
+                left_hand_msg.y = left_wrist_transformed[1]
+                left_hand_msg.z = left_wrist_transformed[2]
+                right_hand_msg.x = right_wrist_transformed[0]
+                right_hand_msg.y = right_wrist_transformed[1]
+                right_hand_msg.z = right_wrist_transformed[2]
 
                 # publish positions of the two hands
                 left_hand_publisher.publish(left_hand_msg)

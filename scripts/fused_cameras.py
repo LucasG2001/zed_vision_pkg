@@ -29,8 +29,26 @@ import time
 import ogl_viewer2.viewer as gl
 import cv_viewer.tracking_viewer as cv_viewer
 import numpy as np
+import math
 
 if __name__ == "__main__":
+
+    T_Y_up_w = np.array([[0, 0, 0, 0.0], # transform from Y up right handed cs to world cs
+                     [0, 0, 0, -1.5922],
+                     [0, 0, 0, 0.0],
+                     [0, 0, 0, 1.0]])
+     
+    T_Y_dwn_Y_up = np.array([[1, 0, 0, 0.0], # transform  from default cs in zed to right handed y up
+                         [0, -1, 0, 0.0],
+                         [0, 0, -1, 0.0],
+                         [0, 0, 0, 1.0]])
+    
+    T_SC =  [[ 0.91213232,  0.35023398, -0.21295725,  0.16293767,],
+            [-0.40921438,  0.74812547, -0.52235225,  0.51675615,],
+            [-0.02362677,  0.56359954,  0.8257102, -1.18484198,],
+            [ 0. ,         0.,          0.,         1.        ]]
+    
+    Transform = T_SC @ T_Y_dwn_Y_up @ T_Y_up_w 
 
     if len(sys.argv) < 2:
         print("This sample display the fused body tracking of multiple cameras.")
@@ -147,12 +165,12 @@ if __name__ == "__main__":
 
     body_tracking_fusion_params = sl.BodyTrackingFusionParameters()
     body_tracking_fusion_params.enable_tracking = True
-    body_tracking_fusion_params.enable_body_fitting = False
+    body_tracking_fusion_params.enable_body_fitting = True
     
     fusion.enable_body_tracking(body_tracking_fusion_params)
 
     rt = sl.BodyTrackingFusionRuntimeParameters()
-    rt.skeleton_minimum_allowed_keypoints = 7
+    rt.skeleton_minimum_allowed_keypoints = 3
     viewer = gl.GLViewer()
     viewer.init()
 
@@ -164,7 +182,7 @@ if __name__ == "__main__":
     # Get ZED camera information
     camera_info = zed.get_camera_information()
     # 2D viewer utilities
-    display_resolution = sl.Resolution(min(camera_info.camera_configuration.resolution.width, 1280), min(camera_info.camera_configuration.resolution.height, 720))
+    display_resolution = sl.Resolution(min(camera_info.camera_configuration.resolution.width, 1500), min(camera_info.camera_configuration.resolution.height, 720))
     image_scale = [display_resolution.width / camera_info.camera_configuration.resolution.width
                  , display_resolution.height / camera_info.camera_configuration.resolution.height]
 
@@ -189,6 +207,22 @@ if __name__ == "__main__":
             # for debug, you can retrieve the data send by each camera, as well as communication and process stat just to make sure everything is okay
             # for cam in camera_identifiers:
             #     fusion.retrieveBodies(single_bodies, rt, cam); 
+
+            # print left and right hand pose
+            for element in bodies.body_list:
+                print("----------------------")
+                # transform to chessboard coordinates
+                right_wrist = np.matmul(Transform, np.transpose(np.append(right_wrist, [1], axis=0)))[:3,]
+                left_wrist = np.matmul(Transform, np.transpose(np.append(right_wrist, [1], axis=0)))[:3,]
+                right_wrist = element.keypoint[4]
+                left_wrist = element.keypoint[7]
+                if (math.isnan(right_wrist[0])):
+                    right_wrist = [100, 100, 100]
+                if (math.isnan(left_wrist[0])):
+                    left_wrist = [100, 100, 100]
+                print("left hand is at {}".format(left_wrist))
+                print("right hand is at {}".format(right_wrist))
+
             viewer.update_bodies(bodies)
             # cam = camera_identifiers[0]
             # fusion.retrieve_bodies(single_bodies, rt, cam)
