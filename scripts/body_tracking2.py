@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 ########################################################################
 #
 # Copyright (c) 2022, STEREOLABS.
@@ -24,8 +25,10 @@
 """
 import sys
 import os
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
+
 
 from geometry_msgs.msg import Point
 import cv2
@@ -40,10 +43,27 @@ from visualization_msgs.msg import Marker, MarkerArray
 from marker_viz import create_markers
 
 
+def get_hand_keypoints(body):
+    # initialize values
+    left_hand_matrix = np.array(body.keypoint[16]).reshape([1, 3])
+    right_hand_matrix = np.array(body.keypoint[17]).reshape([1, 3])
+    for i in range(30, 50):
+        keypoint_left = np.array(body.keypoint[i]).reshape([1, 3])
+        keypoint_right = np.array(body.keypoint[i + 20]).reshape([1, 3])  # loops from 50 to 70 (69 is last)
+        np.vstack((left_hand_matrix, keypoint_left))  # left hand
+        np.vstack((right_hand_matrix, keypoint_right))  # left hand
+
+    left_hand_pos = np.mean(left_hand_matrix, axis=0)
+    right_hand_pos = np.mean(right_hand_matrix, axis=0)
+
+    print("shape of hand positions is ", np.shape(left_hand_pos))
+    return right_hand_pos, left_hand_pos
+
+
 if __name__ == "__main__":
-    
-    T_0S = np.array([[-1, 0, 0, 0.41],
-                     [0, 1, 0, 0.0],
+
+    T_0S = np.array([[-1, 0, 0, 0.358],
+                     [0, 1, 0, 0.03],
                      [0, 0, -1, 0.006],
                      [0, 0, 0, 1]])
     """
@@ -63,14 +83,14 @@ if __name__ == "__main__":
     T_Y_dwn_Y_up = np.eye(4,4)
     
     """
-    
-    T_SC =  np.array([[ 0.87719505,  0.32564224, -0.3528257,   0.26605627],
-             [-0.47987835,  0.6186104,  -0.62212373,  0.61956785],
-             [ 0.01567189,  0.71503728,  0.69891064, -1.00722683],
-             [ 0.,          0.,          0.,          1.        ]])
-    
-    Transform = T_0S @ T_SC 
-   
+
+    T_SC = np.array([[0.59654493, 0.67077667, -0.44067313, 0.65222527],
+                     [-0.80140306, 0.46812619, -0.37230498, 0.74315646],
+                     [-0.04344286, 0.57525345, 0.81682078, -0.9906735],
+                     [0., 0., 0., 1.]])
+
+    Transform = T_0S @ T_SC
+
     print(Transform.dot(np.transpose([[0, 0, 0, 1]])))
 
     #  initalize node
@@ -91,9 +111,10 @@ if __name__ == "__main__":
     # Create a InitParameters object and set configuration parameters
     init_params = sl.InitParameters()
     init_params.camera_resolution = sl.RESOLUTION.HD720  # Use 720 video mode
-    init_params.coordinate_units = sl.UNIT.METER          # Set coordinate units
+    init_params.coordinate_units = sl.UNIT.METER  # Set coordinate units
     init_params.coordinate_system = sl.COORDINATE_SYSTEM.IMAGE
-    
+    init_params.set_from_serial_number(32689769)
+
     # If applicable, use the SVO given as parameter
     # Otherwise use ZED live stream
     if len(sys.argv) == 2:
@@ -112,12 +133,12 @@ if __name__ == "__main__":
     # If the camera is static, uncomment the following line to have better performances
     # positional_tracking_parameters.set_as_static = True
     zed.enable_positional_tracking(positional_tracking_parameters)
-    
+
     body_param = sl.BodyTrackingParameters()
-    body_param.enable_tracking = True                # Track people across images flow
-    body_param.enable_body_fitting = True            # Smooth skeleton move
-    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_ACCURATE 
-    body_param.body_format = sl.BODY_FORMAT.BODY_18  # Choose the BODY_FORMAT you wish to use
+    body_param.enable_tracking = True  # Track people across images flow
+    body_param.enable_body_fitting = True  # Smooth skeleton move
+    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_ACCURATE
+    body_param.body_format = sl.BODY_FORMAT.BODY_70  # Choose the BODY_FORMAT you wish to use
 
     # Enable Object Detection module
     zed.enable_body_tracking(body_param)
@@ -129,13 +150,15 @@ if __name__ == "__main__":
     camera_info = zed.get_camera_information()
 
     # 2D viewer utilities
-    display_resolution = sl.Resolution(min(camera_info.camera_configuration.resolution.width, 1280), min(camera_info.camera_configuration.resolution.height, 720))
+    display_resolution = sl.Resolution(min(camera_info.camera_configuration.resolution.width, 1280),
+                                       min(camera_info.camera_configuration.resolution.height, 720))
     image_scale = [display_resolution.width / camera_info.camera_configuration.resolution.width
-                 , display_resolution.height / camera_info.camera_configuration.resolution.height]
+        , display_resolution.height / camera_info.camera_configuration.resolution.height]
 
     # Create OpenGL viewer
     viewer = gl.GLViewer()
-    viewer.init(camera_info.camera_configuration.calibration_parameters.left_cam, body_param.enable_tracking,body_param.body_format)
+    viewer.init(camera_info.camera_configuration.calibration_parameters.left_cam, body_param.enable_tracking,
+                body_param.body_format)
 
     # Create ZED objects filled in the main loop
     bodies = sl.Bodies()
@@ -151,7 +174,7 @@ if __name__ == "__main__":
     left_wrist = np.array([0, 0, 0])
 
     while viewer.is_available():
-       
+
         # Grab an image
         if zed.grab() == sl.ERROR_CODE.SUCCESS:
             # Retrieve left image
@@ -165,19 +188,19 @@ if __name__ == "__main__":
             zed.retrieve_bodies(bodies, body_runtime_param)
             for element in bodies.body_list:
                 # print("{} {}".format(element.id, element.position))
-                if(len(bodies.body_list)> 1):
+                if (len(bodies.body_list) > 1):
                     print("WARNING: more than one body detected!")
                 print("----------------------")
 
                 # update only if not nan, else use last value
-                if (not math.isnan(element.keypoint[4][0])):
-                    right_wrist = np.copy(element.keypoint[4])
-                if (not math.isnan(element.keypoint[7][0])):
-                    left_wrist = np.copy(element.keypoint[7])
+                if (not math.isnan(element.keypoint[16][0])):
+                    _, left_wrist = get_hand_keypoints(element)
+                if (not math.isnan(element.keypoint[17][0])):
+                    right_wrist, _ = get_hand_keypoints(element)
 
                 # transform hand position to base frame
-                right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3,]
-                left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3,]
+                right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
+                left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
                 print("left hand is at {}".format(left_wrist_transformed))
                 print("right hand is at {}".format(right_wrist_transformed))
                 left_hand_msg.x = left_wrist_transformed[0]
@@ -192,13 +215,13 @@ if __name__ == "__main__":
                 right_hand_publisher.publish(right_hand_msg)
                 marker_array_msg = create_markers(left_hand_msg, right_hand_msg)
                 marker_publisher.publish(marker_array_msg)
-                
 
             # Update GL view
-            viewer.update_view(image, bodies) 
+            viewer.update_view(image, bodies)
             # Update OCV view
             image_left_ocv = image.get_data()
-            cv_viewer.render_2D(image_left_ocv,image_scale, bodies.body_list, body_param.enable_tracking, body_param.body_format)
+            cv_viewer.render_2D(image_left_ocv, image_scale, bodies.body_list, body_param.enable_tracking,
+                                body_param.body_format)
             cv2.imshow("ZED | 2D View", image_left_ocv)
             cv2.waitKey(10)
             rospy.sleep(0.01)
@@ -206,4 +229,3 @@ if __name__ == "__main__":
     viewer.exit()
     image.free(sl.MEM.CPU)
     zed.close()
-    
