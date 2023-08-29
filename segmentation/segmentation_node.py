@@ -14,21 +14,49 @@ import rospy
 from sensor_msgs.msg import Image
 import threading
 import pyzed.sl as sl
+import keyboard
+from cv_bridge import CvBridge, CvBridgeError
+
+global_color_1 = np.zeros([720,1280,3]).astype(np.uint8)
+global_color_2 = np.zeros([720,1280,3]).astype(np.uint8)
+depth_image = np.zeros([720,1280,]).astype(np.uint16)
+user_input = 'f'
 
 
-def read_input():
-    global user_input
-    user_input = input("Enter 's' to segment the image. See the ZED-Ros node for a preview")
+class image_subscriber():
 
-def img_callback(image_data):
-    global color_image
-    print("got a color image")
-    color_image = image_data
+    def __init__(self):
 
-def depth_callback(image_data):
-    global depth_image
-    print("got a depth image")
-    depth_image = image_data
+        self.bridge = CvBridge()        
+        # TODO: Add second depth subscriber after finally using both ZED cams
+        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/depth/depth_registered/", Image, self.depth_callback, 0)
+        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/left/image_rect_color/", Image, self.image_callback, 0)
+
+        rospy.Subscriber("/zed_multi/zed2i_short/zed_nodelet_rear/depth/depth_registered/", Image, self.depth_callback, 1)
+        rospy.Subscriber("/zed_multi/zed2i_short/zed_nodelet_rear/left/image_rect_color/", Image, self.image_callback, 1)
+        self.color_images = [0, 0]
+        self.depth_images = [0, 0]
+     
+    
+    def depth_callback(self, depth_data, index):
+        try:
+            depth_image = self.bridge.imgmsg_to_cv2(depth_data, "32FC1")
+        except CvBridgeError as e:
+            print(e)
+        self.depth_images[index] = np.array(depth_image, dtype=np.float32) * 10000
+        # print("created depth image")
+        
+    def image_callback(self, img_data, index):
+        try:
+            color_image = self.bridge.imgmsg_to_cv2(img_data, "bgr8")
+        except CvBridgeError as e:
+            print(e)
+        self.color_images[index] = np.array(color_image, dtype=np.uint8)
+        # print("created color image")
+
+    def get_images(self):
+        return self.color_images, self.depth_images
+
 
 def homogenous_transform(R, t):
     homogeneous_matrix = np.eye(4, dtype=np.float64)
@@ -37,17 +65,14 @@ def homogenous_transform(R, t):
 
     return homogeneous_matrix
 
-color_image = np.zeros([720,1280])
-depth_image = np.zeros([720,1280])
-user_input = 'f'
-
 if __name__ == "__main__": # This is not a funciton but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
-    rospy.Subscriber("/zed2i/zed_node/rgb/image_rect_color/", Image, img_callback)
-    rospy.Subscriber("/zed2i/zed_node/depth/depth_registered/", Image, img_callback)
+    image_subscriber = image_subscriber()
     run_segmentation = False
-    rate = rospy.Rate(1)
+    depth_images = []
+    color_images = []
+    rate = rospy.Rate(10)
     model = FastSAM('FastSAM-x.pt')
     DEVICE = torch.device(
         "cuda"
@@ -56,10 +81,6 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
         if torch.backends.mps.is_available()
         else "cpu"  
     )
-    # Start the input reading thread
-    input_thread = threading.Thread(target=read_input)
-    input_thread.start()
-
     print("using device ", DEVICE)
 
     T_0S = np.array([[-1, 0, 0, 0.41],  # Transformations from Robot base (0) to Checkerboard Frame (S)
@@ -85,21 +106,9 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
     # depth/depth_registered
     # prefix: /zed2i/zed_node/
     # placeholders
-    print("settin gimages")
-    depth_image1 = depth_image
-    color_image1 = color_image
-    depth_image2 = depth_image
-    color_image2 = color_image
     # ToDo: Read in images from Ros topics (see callbacks)
-    # convert color scale
-    print("creating o3d images")
-    # create o3d images
-    o3d_depth_1 = o3d.geometry.Image(depth_image1.astype(np.uint16))
-    o3d_color_1 = o3d.geometry.Image(color_image1.astype(np.uint8))
-    # image 2
-    o3d_depth_2 = o3d.geometry.Image(depth_image2.astype(np.uint16))
-    o3d_color_2 = o3d.geometry.Image(color_image2.astype(np.uint8))
     # ToDo: Read in extrinsics from zed node
+    # Had to put this in the while loop -> like that we copy the images in the moment where we press s
     print("reading intrinsics")
     o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
                                                        fx=533.77, fy=535.53,
@@ -112,7 +121,22 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
     print("starting loop")
     while not rospy.is_shutdown():
         print("looping")
-        if segment_image == True:
+        user_input = input("Enter 's' to segment the image. See the ZED-Ros node for a preview. Press 'x' to shut down")
+        if user_input.lower() == 'x':  # .lower() makes comparison case
+            rospy.signal_shutdown("User requested shutdown")
+        if user_input.lower() == 's':
+            print("setting images")
+            color_image1, color_image2 = image_subscriber.get_images()[0]
+            depth_image1, depth_image2 = image_subscriber.get_images()[1]
+            # convert color scale
+            print("creating o3d images")
+            # create o3d images
+            o3d_depth_1 = o3d.geometry.Image(depth_image1.astype(np.float32))
+            o3d_color_1 = o3d.geometry.Image(color_image1.astype(np.uint8))
+            # image 2
+            o3d_depth_2 = o3d.geometry.Image(depth_image2.astype(np.float32))
+            o3d_color_2 = o3d.geometry.Image(color_image2.astype(np.uint8))
+            segment_image = True
             # segment only upon user input
             
             print("starting segmentation")
@@ -126,7 +150,7 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
             segmenter.generate_pointclouds_from_masks()
             global_pointclouds = segmenter.project_pointclouds_to_global()
             correspondences, scores = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0)
-            corresponding_pointclouds = segmenter.align_corresponding_objects(correspondences, scores, visualize=False)
+            corresponding_pointclouds = segmenter.align_corresponding_objects(correspondences, scores, visualize=True)
 
             #ToDo: publish objects to planning scene
             segment_image = False
