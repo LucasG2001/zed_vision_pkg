@@ -3,25 +3,45 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 import numpy as np
-import open3d.visualization
 import cv2
 from segmentation_matcher import SegmentationMatcher, SegmentationParameters
-from segmentation_matching_helpers import *
-import pickle
-import time
+from segmentation_matching_helpers import FastSAM
+import open3d as o3d
 import torch
 import rospy
 from sensor_msgs.msg import Image
-import threading
+from sensor_msgs.msg import CameraInfo
 import pyzed.sl as sl
-import keyboard
 from cv_bridge import CvBridge, CvBridgeError
 
-global_color_1 = np.zeros([720,1280,3]).astype(np.uint8)
-global_color_2 = np.zeros([720,1280,3]).astype(np.uint8)
-depth_image = np.zeros([720,1280,]).astype(np.uint16)
-user_input = 'f'
+class intrinsic_subscriber():
+    def __init__(self):
+        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/left/camera_info", CameraInfo, self.intrisics_callback, 0)
+        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_rear/left/camera_info", CameraInfo, self.intrisics_callback, 1)
+        o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
+                                                        fx=533.77, fy=535.53,
+                                                       cx=661.87, cy=351.29)
 
+        o3d_intrinsic2 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
+                                                            fx=523.68, fy=523.68,
+                                                            cx=659.51, cy=365.34)
+        
+        self.o3d_intrinsics = [o3d_intrinsic1, o3d_intrinsic2]
+
+
+    
+    def intrinsics_calback(self, data, index):
+        intrinsics_array = data.K
+        fx = intrinsics_array[0]
+        cx = intrinsics_array[2]
+        fy = intrinsics_array[4]
+        cy = intrinsics_array[5]
+        height = data.height
+        width = data.width
+        self.o3d_intrinsics[index].set_intrisic(width, height, fx, fy, cx, cy)
+        
+    def get_intrinsics(self):
+        return self.o3d_intrinsics
 
 class image_subscriber():
 
@@ -66,7 +86,7 @@ def homogenous_transform(R, t):
 
     return homogeneous_matrix
 
-if __name__ == "__main__": # This is not a funciton but an if clause !!
+if __name__ == "__main__": # This is not a function but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
     image_subscriber = image_subscriber()
@@ -84,6 +104,8 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
     )
     print("using device ", DEVICE)
 
+
+    # TODO: read extrinsics from file or ROS parameter server
     T_0S = np.array([[-1, 0, 0, 0.41],  # Transformations from Robot base (0) to Checkerboard Frame (S)
                      [0, 1, 0, 0.0],
                      [0, 0, -1, 0.006],
@@ -102,14 +124,10 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
     H1 = T_0S @ homogenous_transform(rotations["camera0"], translations["camera0"])  # T_0S @ T_S_c1
     H2 = T_0S @ homogenous_transform(rotations["camera1"], translations["camera1"])  # T_0S @ T_S_c2
 
-    # ToDo: subscribe to necessary ROS topics, such as images
-    # rgb/image_rect_color
-    # depth/depth_registered
-    # prefix: /zed2i/zed_node/
-    # placeholders
-    # ToDo: Read in images from Ros topics (see callbacks)
-    # ToDo: Read in extrinsics from zed node
-    # Had to put this in the while loop -> like that we copy the images in the moment where we press s
+   
+    # ToDo: Read in intrinsics from zed node
+    # published as sensor_msgs/CameraInfo
+    # on topic /zed_multi/zed2i_long/zed_nodelet_front/left/camera_info or rear/left/camera_info respectively
     print("reading intrinsics")
     o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
                                                        fx=533.77, fy=535.53,
@@ -126,6 +144,7 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
         if user_input.lower() == 'x':  # .lower() makes comparison case
             rospy.signal_shutdown("User requested shutdown")
         if user_input.lower() == 's':
+            # segment only upon user input
             print("setting images")
             color_image1, color_image2 = image_subscriber.get_images()[0]
             cv2.imshow("color_image1", color_image1)
@@ -147,9 +166,7 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
             # image 2
             o3d_depth_2 = o3d.geometry.Image(depth_image2.astype(np.float32))
             o3d_color_2 = o3d.geometry.Image(color_image2.astype(np.uint8))
-            segment_image = True
-            # segment only upon user input
-            
+           
             print("starting segmentation")
             segmentation_parameters = SegmentationParameters(640, conf=0.5, iou=0.9)
             segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.5, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
@@ -164,7 +181,6 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
             corresponding_pointclouds = segmenter.align_corresponding_objects(correspondences, scores, visualize=True)
 
             #ToDo: publish objects to planning scene
-            segment_image = False
 
         rate.sleep()
  
