@@ -21,7 +21,7 @@ class SegmentationMatcher:
     Note that this Matcher works with tuples or lists of images, camera parameters and so on
     """
 
-    def __init__(self, segmentation_parameters, cutoff, model_path='FastSAM-x.pt', DEVICE="cpu"):
+    def __init__(self, segmentation_parameters, cutoff, model_path='FastSAM-x.pt', DEVICE="cpu", depth_scale=1.0):
         self.color_images = []
         self.depth_images = []
         self.intrinsics = []
@@ -34,6 +34,7 @@ class SegmentationMatcher:
         self.pc_array_2 = []
         self.device = DEVICE
         self.nn_model.to(self.device)
+        self.depth_scale = depth_scale
 
     def set_camera_params(self, intrinsics, transforms):
         self.intrinsics = intrinsics
@@ -126,7 +127,7 @@ class SegmentationMatcher:
                 # Done: Check if creating pointcloud from depth image only is faster and feasible
                 # It speeds up the function call by ca. 1s but makes it impossible to use colored ICP
                 rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(local_color, local_depth,
-                                                                              depth_scale=10000,
+                                                                              depth_scale=self.depth_scale,
                                                                               depth_trunc=self.max_depth,
                                                                               convert_rgb_to_intensity=False)
 
@@ -135,7 +136,7 @@ class SegmentationMatcher:
                 rgbd_creating += rgbd_time
                 # pc = open3d.cpu.pybind.geometry.PointCloud.create_from_depth_image(depth=local_depth,
                 # intrinsic=intrinsic,
-                # depth_scale=10000,
+                # depth_scale=self.depth_scale,
                 # depth_trunc=self.max_depth)
 
                 pc_creation_time = time.time() - rgbd_time - start_time

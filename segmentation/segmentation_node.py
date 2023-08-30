@@ -32,6 +32,7 @@ class image_subscriber():
         rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/depth/depth_registered/", Image, self.depth_callback, 0)
         rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/left/image_rect_color/", Image, self.image_callback, 0)
 
+        # ATTENTION: depending on the zed2i.yaml file for the zed configuration parameters the images will be downsampled to lower resolutions
         rospy.Subscriber("/zed_multi/zed2i_short/zed_nodelet_rear/depth/depth_registered/", Image, self.depth_callback, 1)
         rospy.Subscriber("/zed_multi/zed2i_short/zed_nodelet_rear/left/image_rect_color/", Image, self.image_callback, 1)
         self.color_images = [0, 0]
@@ -43,7 +44,7 @@ class image_subscriber():
             depth_image = self.bridge.imgmsg_to_cv2(depth_data, "32FC1")
         except CvBridgeError as e:
             print(e)
-        self.depth_images[index] = np.array(depth_image, dtype=np.float32) * 10000
+        self.depth_images[index] = np.array(depth_image, dtype=np.float32)
         # print("created depth image")
         
     def image_callback(self, img_data, index):
@@ -127,7 +128,17 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
         if user_input.lower() == 's':
             print("setting images")
             color_image1, color_image2 = image_subscriber.get_images()[0]
+            cv2.imshow("color_image1", color_image1)
+            cv2.waitKey(0)
+            cv2.imshow("color_image2", color_image2)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
             depth_image1, depth_image2 = image_subscriber.get_images()[1]
+            cv2.imshow("depth1", depth_image1)
+            cv2.waitKey(0)
+            cv2.imshow("depth2", depth_image2)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
             # convert color scale
             print("creating o3d images")
             # create o3d images
@@ -140,8 +151,8 @@ if __name__ == "__main__": # This is not a funciton but an if clause !!
             # segment only upon user input
             
             print("starting segmentation")
-            segmentation_parameters = SegmentationParameters(736, conf=0.6, iou=0.9)
-            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.5, model_path='FastSAM-x.pt', DEVICE=DEVICE)
+            segmentation_parameters = SegmentationParameters(640, conf=0.5, iou=0.9)
+            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.5, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
             segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
             segmenter.preprocess_images(visualize=False)

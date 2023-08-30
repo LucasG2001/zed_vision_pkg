@@ -1,0 +1,5 @@
+The two files here are not the files ehich are loaded to the ros parameter server
+when executing the launchfile "zed_multicam.launch". They are a copy of a firt working versioin with the following special parameters:
+- no downsampling (factor 1.0)
+-depth mode NEURAL (4)
+-resolution HD720
