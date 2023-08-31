@@ -9,13 +9,41 @@ from segmentation_matching_helpers import FastSAM
 import open3d as o3d
 import torch
 import rospy
-from sensor_msgs.msg import Image
-from sensor_msgs.msg import CameraInfo
+from sensor_msgs.msg import Image, CameraInfo
 import pyzed.sl as sl
 from cv_bridge import CvBridge, CvBridgeError
+from moveit_msgs.msg import CollisionObject
+from shape_msgs.msg import SolidPrimitive
+from geometry_msgs.msg import Pose
+from scipy.spatial.transform import Rotation
 
-def create_planning_scene_object_from_bbox(bbox):
+
+def create_planning_scene_object_from_bbox(bbox, id = "1"):
     vertices = bbox.get_box_points() # o3d vector
+    R = np.array(bbox.R) # Rotaiton Matrix of bounding box
+    center = bbox.center
+    sizes = bbox.extent
+    quat_R = (Rotation.from_matrix(R)).as_quat()
+    # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
+    collision_object = CollisionObject()
+    collision_object.header.frame_id = "panda_link0"
+
+    pose = Pose()
+    pose.position.x, pose.position.y, pose.position.z = center 
+    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
+
+    primitive = SolidPrimitive()
+    primitive.type = SolidPrimitive.BOX
+    primitive.dimensions = sizes
+    # collision_object.pose.append(pose) # this is the pose to which everything else is defined relative?
+    # TODO: get id's to be consotent throughout segmentations nad the planning scene
+    collision_object.id = id
+    collision_object.primitives.append(primitive)
+    collision_object.primitive_poses.append(pose)
+    collision_object.operation = CollisionObject.ADD
+
+    return collision_object
+
 
 
 class intrinsic_subscriber():
@@ -31,7 +59,6 @@ class intrinsic_subscriber():
                                                             cx=659.51, cy=365.34)
         
         self.o3d_intrinsics = [o3d_intrinsic1, o3d_intrinsic2]
-
 
     
     def intrinsics_calback(self, data, index):
@@ -93,6 +120,7 @@ def homogenous_transform(R, t):
 if __name__ == "__main__": # This is not a function but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
+    scene_publisher = rospy.Publisher("/moveit_planning_scene", CollisionObject, queue_size=1)
     image_subscriber = image_subscriber()
     run_segmentation = False
     depth_images = []
@@ -187,7 +215,8 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # next step also deletes the corresponded poointclouds from general pintcloud array
             correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0) 
             # Here we get the "stitched" objects matched by both cameras
-            corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, visualize=True)
+            # TODO (IDEA) we could ICP the resultin pointclouds to find the bet matching geomtric primitives
+            corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, visualize=False)
             # get all unique pointclouds
             pointclouds = segmenter.get_final_pointclouds()
             bounding_boxes = []
@@ -196,6 +225,9 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 bounding_boxes.append(element.get_minimal_oriented_bounding_box(robust=True))
 
             #ToDo: publish objects to planning scene
+            collision_object = create_planning_scene_object_from_bbox(bounding_boxes[0])
+            scene_publisher.publish(collision_object)
+            print("published object to the planning scene")
 
         rate.sleep()
  

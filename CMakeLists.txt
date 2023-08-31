@@ -26,6 +26,8 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_ros
   urdf
   geometry_msgs
+  shape_msgs
+  moveit_msgs
 )
 
 ## System dependencies are found with CMake's conventions
