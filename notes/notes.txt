@@ -1,0 +1,22 @@
+Error Message when running roslaunch zed_vision zed_multicam.launch:
+
+RLException: Unable to contact my own server at [http://192.168.1.111:34767/].
+This usually means that the network is not configured properly.
+
+A common cause is that the machine cannot connect to itself.  Please check
+for errors by running:
+
+	ping 192.168.1.111
+
+For more tips, please see
+
+	http://wiki.ros.org/ROS/NetworkSetup
+
+The traceback for the exception was written to the log file
+
+Solution:
+
+set in .bashrc:
+
+export ROS_HOSTNAME = 192.176.1.222 (where 192.... should be the ROS_IP, which is the local IP address)
+

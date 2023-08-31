@@ -123,7 +123,7 @@ def homogenous_transform(R, t):
 if __name__ == "__main__": # This is not a function but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
-    scene_publisher = rospy.Publisher("/moveit_planning_scene", CollisionObject, queue_size=1)
+    scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1)
     image_subscriber = image_subscriber()
     run_segmentation = False
     depth_images = []
@@ -145,16 +145,16 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                      [0, 1, 0, 0.0],
                      [0, 0, -1, 0.006],
                      [0, 0, 0, 1]])
-    rotations = {"camera0": np.array([[0.15065033, -0.75666915, 0.63620458],  # (weiter oben)
-                                      [0.98780181, 0.14086295, -0.06637176],
-                                      [-0.0393962, 0.63844297, 0.76866021]]),
+    rotations = {"camera0": np.array([[ 0.04331392, -0.81002476,  0.58479381],
+                                      [ 0.99901967,  0.02975988, -0.03277262],
+                                      [ 0.00914324,  0.58564003,  0.81051968]]),
 
-                 "camera1": np.array([[0.38072735, 0.73977138, -0.55478373],
-                                      [-0.92468093, 0.30682222, -0.22544466],
-                                      [0.00344246, 0.59883088, 0.8008681]])}
+                 "camera1": np.array([[2.89857657e-01,  7.68987549e-01, -5.69772488e-01],
+                                      [-9.57069339e-01,  2.33458028e-01, -1.71801133e-01],
+                                      [9.05029095e-04,  5.95109653e-01,  8.03644002e-01]])}
 
-    translations = {"camera0": np.array([[-0.45760198], [0.38130433], [-0.84696597]]),
-                    "camera1": np.array([[0.59649782], [0.49823864], [-0.6634929]])}
+    translations = {"camera0": np.array([[-0.50899208], [0.32726105], [-0.97014872]]),
+                    "camera1": np.array([[0.5964686], [0.528983], [-0.645024]])}
 
     H1 = T_0S @ homogenous_transform(rotations["camera0"], translations["camera0"])  # T_0S @ T_S_c1
     H2 = T_0S @ homogenous_transform(rotations["camera1"], translations["camera1"])  # T_0S @ T_S_c2
@@ -183,25 +183,21 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             print("setting images")
             color_image1, color_image2 = image_subscriber.get_images()[0]
             cv2.imshow("color_image1", color_image1)
+            cv2.imwrite("images/color1.png", color_image1)
             cv2.waitKey(0)
             cv2.imshow("color_image2", color_image2)
+            cv2.imwrite("images/color2.png", color_image2)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
             depth_image1, depth_image2 = image_subscriber.get_images()[1]
             cv2.imshow("depth1", depth_image1)
+            cv2.imwrite("images/depth1.png", depth_image1)
             cv2.waitKey(0)
             cv2.imshow("depth2", depth_image2)
+            cv2.imwrite("images/depth2.png", depth_image2)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
-            # convert color scale
-            print("creating o3d images")
-            # create o3d images
-            o3d_depth_1 = o3d.geometry.Image(depth_image1.astype(np.float32))
-            o3d_color_1 = o3d.geometry.Image(color_image1.astype(np.uint8))
-            # image 2
-            o3d_depth_2 = o3d.geometry.Image(depth_image2.astype(np.float32))
-            o3d_color_2 = o3d.geometry.Image(color_image2.astype(np.uint8))
-           
+            # TODO: convert color scale
             print("starting segmentation")
             segmentation_parameters = SegmentationParameters(736, conf=0.5, iou=0.9)
             segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.5, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
@@ -212,14 +208,14 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # For this, we need to track the robots camera position and apply a iou search in n-dimensional space (curse of dimensionylity!!!)
             # We could thus preserve segmentation information.
             # This process may be sped up by using tracking
-            mask_arrays = segmenter.segment_color_images_batch(filter_masks=False)  # batch processing of two images saves meagre 0.3 seconds
+            mask_arrays = segmenter.segment_color_images_batch(filter_masks=True)  # batch processing of two images saves meagre 0.3 seconds
             segmenter.generate_pointclouds_from_masks()
             global_pointclouds = segmenter.project_pointclouds_to_global()
             # next step also deletes the corresponded poointclouds from general pintcloud array
             correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0) 
             # Here we get the "stitched" objects matched by both cameras
             # TODO (IDEA) we could ICP the resultin pointclouds to find the bet matching geomtric primitives
-            corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, visualize=False)
+            corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, visualize=True)
             # get all unique pointclouds
             pointclouds = segmenter.get_final_pointclouds()
             bounding_boxes = []
