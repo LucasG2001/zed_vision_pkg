@@ -129,6 +129,8 @@ def match_segmentations2D(mask_array1, mask_array2, id1, id2):
 def match_segmentations_3d(pc_arr_1, pc_arr_2, voxel_size, threshold=0.05):
     # Iterate over each segmentation in image1 and find corresponding in image2
     # Calculate intersection over union (IoU) for all pairs of labels
+    corresponding_indices_1 = []
+    corresponding_indices_2 = []
     iou_matrix = np.zeros((len(pc_arr_1), len(pc_arr_2)))
     for i, pc1 in enumerate(pc_arr_1):
         for j, pc2 in enumerate(pc_arr_2):
@@ -145,8 +147,10 @@ def match_segmentations_3d(pc_arr_1, pc_arr_2, voxel_size, threshold=0.05):
         iou_matrix[i, :] = -1  # Remove row i
         iou_matrix[:, j] = -1  # Remove column j
         corresponding_pointclouds.append((pc_arr_1[i], pc_arr_2[j]))
+        corresponding_indices_1.append(i)
+        corresponding_indices_2.append(j)
         # ToDo: Add additional inspection on 2D image, using image id's
-    return corresponding_pointclouds, corresponding_iou
+    return corresponding_pointclouds, corresponding_iou, corresponding_indices_1, corresponding_indices_2
 
 
 def project_point_clouds_to_global(pcd_arr, R, t, paint=None):

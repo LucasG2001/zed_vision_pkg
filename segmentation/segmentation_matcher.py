@@ -32,9 +32,13 @@ class SegmentationMatcher:
         self.max_depth = cutoff  # truncation depth
         self.pc_array_1 = []
         self.pc_array_2 = []
+        self.final_pc_array = []
         self.device = DEVICE
         self.nn_model.to(self.device)
         self.depth_scale = depth_scale
+
+    def get_final_pointclouds(self):
+        return self.final_pc_array
 
     def set_camera_params(self, intrinsics, transforms):
         self.intrinsics = intrinsics
@@ -142,9 +146,10 @@ class SegmentationMatcher:
                 pc_creation_time = time.time() - rgbd_time - start_time
                 pc_creating += pc_creation_time
                 pc = pc.uniform_down_sample(every_k_points=3)
-                pc, _ = pc.remove_statistical_outlier(nb_neighbors=25, std_ratio=0.6)
-                # ToDO: PC filtering is very costly and maks up 60% of the function call.
+                pc, _ = pc.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
+                # TODO: PC filtering is very costly and maks up 60% of the function call.
                 #  However, the quality of the matches is shit without it
+                # Statistical outlier rejection is however, way faster than radius outlier rejection
                 # pc, _ = pc.remove_radius_outlier(nb_points=30, radius=0.05)
                 pc_postprocess_time = time.time() - pc_creation_time - rgbd_time - start_time
                 postprocessing += pc_postprocess_time
@@ -165,15 +170,25 @@ class SegmentationMatcher:
         return self.pc_array_1, self.pc_array_2
 
     def match_segmentations(self, voxel_size=0.05, threshold=0.0):
-        correspondences, scores = match_segmentations_3d(self.pc_array_1, self.pc_array_2, voxel_size=voxel_size,
+        correspondences, scores, indx1, indx2 = match_segmentations_3d(self.pc_array_1, self.pc_array_2, voxel_size=voxel_size,
                                                          threshold=threshold)
+        for index in sorted(indx1, reverse=True):
+            del self.pc_array_1[index]
 
-        return correspondences, scores
+        for index in sorted(indx2, reverse=True):
+            del self.pc_array_2[index]
+
+        self.final_pc_array = self.pc_array_1
+        self.final_pc_array.extend(self.pc_array_2)
+        
+
+        return correspondences, scores, indx1, indx2
 
     def align_corresponding_objects(self, correspondences, scores, visualize=False):
         # ToDo: (Here or in other function) -> take correspondences and create single pointcloud
         #  out of them for ROS publishing
         corresponding_pointclouds = []
+        stitched_objects = []
         for pc_tuple, iou in zip(correspondences, scores):
             # align both pointclouds
             max_dist = 2 * np.linalg.norm(pc_tuple[0].get_center() - pc_tuple[1].get_center())
@@ -194,7 +209,11 @@ class SegmentationMatcher:
                 print("proceeding by overlaying point-clouds without transformation")
 
             corresponding_pointclouds.append(pc_tuple)
+            # We use the open3d convienience operator "+" to combine two pointclouds
+            stitched_objects.append((pc_tuple[0] + pc_tuple[1]).uniform_down_sample(every_k_points = 2))
+            self.final_pc_array.extend(stitched_objects)
+            # OPTIONAL TODO: reconstrct the whole mesh from segmented pointcloud
             if visualize:
-                o3d.visualization.draw_geometries(pc_tuple)
+                o3d.visualization.draw_geometries(stitched_objects)
 
-        return corresponding_pointclouds
+        return corresponding_pointclouds, stitched_objects
