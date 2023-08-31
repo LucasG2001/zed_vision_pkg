@@ -18,31 +18,34 @@ from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation
 
 
-def create_planning_scene_object_from_bbox(bbox, id = "1"):
-    vertices = bbox.get_box_points() # o3d vector
-    R = np.array(bbox.R) # Rotaiton Matrix of bounding box
-    center = bbox.center
-    sizes = bbox.extent
-    quat_R = (Rotation.from_matrix(R)).as_quat()
-    # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
-    collision_object = CollisionObject()
-    collision_object.header.frame_id = "panda_link0"
+def create_planning_scene_object_from_bbox(bboxes, id = "1"):
+    collision_objects = CollisionObject()
+    collision_objects.header.frame_id = "panda_link0"
+    for bbox in bboxes:
+        vertices = bbox.get_box_points() # o3d vector
+        R = np.array(bbox.R) # Rotaiton Matrix of bounding box
+        center = bbox.center
+        sizes = bbox.extent
+        quat_R = (Rotation.from_matrix(R)).as_quat()
+        # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
+        
 
-    pose = Pose()
-    pose.position.x, pose.position.y, pose.position.z = center 
-    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
+        pose = Pose()
+        pose.position.x, pose.position.y, pose.position.z = center 
+        pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
 
-    primitive = SolidPrimitive()
-    primitive.type = SolidPrimitive.BOX
-    primitive.dimensions = sizes
-    # collision_object.pose.append(pose) # this is the pose to which everything else is defined relative?
-    # TODO: get id's to be consotent throughout segmentations nad the planning scene
-    collision_object.id = id
-    collision_object.primitives.append(primitive)
-    collision_object.primitive_poses.append(pose)
-    collision_object.operation = CollisionObject.ADD
+        primitive = SolidPrimitive()
+        primitive.type = SolidPrimitive.BOX
+        primitive.dimensions = sizes
+        # collision_object.pose.append(pose) # this is the pose to which everything else is defined relative?
+        # TODO: get id's to be consotent throughout segmentations nad the planning scene
+        collision_objects.id = id
+        collision_objects.primitives.append(primitive)
+        collision_objects.primitive_poses.append(pose)
+        collision_objects.operation = CollisionObject.ADD
+        
 
-    return collision_object
+    return collision_objects
 
 
 
@@ -225,7 +228,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 bounding_boxes.append(element.get_minimal_oriented_bounding_box(robust=True))
 
             #ToDo: publish objects to planning scene
-            collision_object = create_planning_scene_object_from_bbox(bounding_boxes[0])
+            collision_object = create_planning_scene_object_from_bbox(bounding_boxes)
             scene_publisher.publish(collision_object)
             print("published object to the planning scene")
 
