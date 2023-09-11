@@ -61,29 +61,13 @@ def get_hand_keypoints(body):
 
 
 if __name__ == "__main__":
-
+   # Transform from robot base to checkerboard frame (checkerboard frame in robot frame)
     T_0S = np.array([[-1, 0, 0, 0.358],
                      [0, 1, 0, 0.03],
                      [0, 0, -1, 0.006],
                      [0, 0, 0, 1]])
-    """
-      
-    T_Y_up_w = np.array([[0, 0, 0, 0.0], # transform from Y up right handed cs to world cs
-                     [0, 0, 0, -1.5922],
-                     [0, 0, 0, 0.0],
-                     [0, 0, 0, 1.0]])
-    
-    T_Y_up_w = np.eye(4,4)
-     
-    T_Y_dwn_Y_up = np.array([[1, 0, 0, 0.0], # transform  from default cs in zed to right handed y up
-                         [0, -1, 0, 0.0],
-                         [0, 0, -1, 0.0],
-                         [0, 0, 0, 1.0]])
-    
-    T_Y_dwn_Y_up = np.eye(4,4)
-    
-    """
 
+    # Camera frame in checkerboard frame
     T_SC = np.array([[0.59654493, 0.67077667, -0.44067313, 0.65222527],
                      [-0.80140306, 0.46812619, -0.37230498, 0.74315646],
                      [-0.04344286, 0.57525345, 0.81682078, -0.9906735],
