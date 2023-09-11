@@ -75,8 +75,6 @@ if __name__ == "__main__":
 
     Transform = T_0S @ T_SC
 
-    print(Transform.dot(np.transpose([[0, 0, 0, 1]])))
-
     #  initalize node
     rospy.init_node("body_tracking_node")
     # initialze publisher for hand keypoint
