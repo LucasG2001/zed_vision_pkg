@@ -26,7 +26,7 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
         R = np.array(bbox.R) # Rotaiton Matrix of bounding box
         center = bbox.center
         sizes = bbox.extent
-        quat_R = (Rotation.from_matrix(R)).as_quat()
+        quat_R = (Rotation.from_matrix(np.eye(3,3))).as_quat()
         # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
         
 
@@ -141,20 +141,23 @@ if __name__ == "__main__": # This is not a function but an if clause !!
 
 
     # TODO: read extrinsics from file or ROS parameter server
+    # TODO: make reaidng extrinsics consistent with the camera in use
     T_0S = np.array([[-1, 0, 0, 0.41],  # Transformations from Robot base (0) to Checkerboard Frame (S)
                      [0, 1, 0, 0.0],
                      [0, 0, -1, 0.006],
                      [0, 0, 0, 1]])
-    rotations = {"camera0": np.array([[ 0.04331392, -0.81002476,  0.58479381],
-                                      [ 0.99901967,  0.02975988, -0.03277262],
-                                      [ 0.00914324,  0.58564003,  0.81051968]]),
+    
+    # camera higher up is camera 0
+    rotations = {"camera0": np.array([[ 0.26882385, -0.86482579,  0.4240402],
+                                      [ 0.96318545,  0.24262314, -0.11579204],
+                                      [-0.00274202,  0.43955702,  0.8982105]]),
 
-                 "camera1": np.array([[2.89857657e-01,  7.68987549e-01, -5.69772488e-01],
-                                      [-9.57069339e-01,  2.33458028e-01, -1.71801133e-01],
-                                      [9.05029095e-04,  5.95109653e-01,  8.03644002e-01]])}
+                 "camera1": np.array([[ 0.26074776,  0.85460937, -0.44905838],
+                                      [-0.96538491,  0.22767297, -0.12726741],
+                                      [-0.00652547,  0.46669888,  0.88439221]])}
 
-    translations = {"camera0": np.array([[-0.50899208], [0.32726105], [-0.97014872]]),
-                    "camera1": np.array([[0.5964686], [0.528983], [-0.645024]])}
+    translations = {"camera0": np.array([[-0.44143352], [0.25198399], [-0.96908148]]),
+                    "camera1": np.array([[0.6263783], [0.53805005], [-0.77825917]])}
 
     H1 = T_0S @ homogenous_transform(rotations["camera0"], translations["camera0"])  # T_0S @ T_S_c1
     H2 = T_0S @ homogenous_transform(rotations["camera1"], translations["camera1"])  # T_0S @ T_S_c2
