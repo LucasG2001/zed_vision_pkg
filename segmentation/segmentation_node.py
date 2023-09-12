@@ -19,9 +19,10 @@ from scipy.spatial.transform import Rotation
 
 
 def create_planning_scene_object_from_bbox(bboxes, id = "1"):
-    collision_objects = CollisionObject()
-    collision_objects.header.frame_id = "panda_link0"
-    for bbox in bboxes:
+    collision_objects = []
+    for i, bbox in enumerate(bboxes):
+        collision_object = CollisionObject()
+        collision_object.header.frame_id = "panda_link0"
         vertices = bbox.get_box_points() # o3d vector
         R = np.array(bbox.R) # Rotaiton Matrix of bounding box
         center = bbox.center
@@ -39,10 +40,11 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
         primitive.dimensions = sizes
         # collision_object.pose.append(pose) # this is the pose to which everything else is defined relative?
         # TODO: get id's to be consotent throughout segmentations nad the planning scene
-        collision_objects.id = id
-        collision_objects.primitives.append(primitive)
-        collision_objects.primitive_poses.append(pose)
-        collision_objects.operation = CollisionObject.ADD
+        collision_object.id = str(i)
+        collision_object.primitives.append(primitive)
+        collision_object.primitive_poses.append(pose)
+        collision_object.operation = CollisionObject.ADD
+        collision_objects.append(collision_object)
         
 
     return collision_objects
@@ -230,8 +232,10 @@ if __name__ == "__main__": # This is not a function but an if clause !!
 
             
             #ToDo: publish objects to planning scene
-            collision_object = create_planning_scene_object_from_bbox(bounding_boxes)
-            scene_publisher.publish(collision_object)
+            collision_objects = create_planning_scene_object_from_bbox(bounding_boxes)
+            for object in collision_objects:
+                scene_publisher.publish(object)
+                rospy.sleep(0.1)
             print("published object to the planning scene")
             matched_objects.extend(bounding_boxes)
             o3d.visualization.draw_geometries(matched_objects)
