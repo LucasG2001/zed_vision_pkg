@@ -6,7 +6,7 @@
 
 <!-- CAMERA 1 --> 
     <!-- Serial Number -->
-        <arg name="camera_sn_1"   default="34226204" /> 
+        <arg name="camera_sn_1"   default="32689769" /> 
         <!-- Base frame -->
         <arg name="base_frame_1"            default="world" />
         <!-- Position and Orientation respect to base frame -->
@@ -19,7 +19,7 @@
 
 <!-- CAMERA 2 --> 
     <!-- Serial Number -->
-        <arg name="camera_sn_2" default="32689769" />
+        <arg name="camera_sn_2" default="34226204" />
         <arg name="base_frame_2" default="world" />
         <arg name="cam_pos_x_2" default="0.23842621" />
         <arg name="cam_pos_y_2" default="-0.61392824" />

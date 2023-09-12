@@ -203,10 +203,10 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # TODO: convert color scale
             print("starting segmentation")
             segmentation_parameters = SegmentationParameters(736, conf=0.5, iou=0.9)
-            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.5, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
+            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=2.0, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
             segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
-            segmenter.preprocess_images(visualize=False)
+            segmenter.preprocess_images(visualize=True)
             # TODO: by mounting a camera on the robot we could reconstruct the entire scene by matching multiple perspectives.
             # For this, we need to track the robots camera position and apply a iou search in n-dimensional space (curse of dimensionylity!!!)
             # We could thus preserve segmentation information.

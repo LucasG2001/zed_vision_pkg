@@ -70,13 +70,13 @@ class SegmentationMatcher:
     def set_segmentation_params(self, segmentation_params):
         self.seg_params = segmentation_params
 
-    def segment_color_images(self, filter_masks=True):
+    def segment_color_images(self, filter_masks=True, visualize=False):
         # ToDo: test if one can scam runtime of the model by combining the them at the same time
         # ToDo: Yes we can do exactly that
         DEVICE = self.device
         print("loaded NN model")
         color_images = self.color_images
-        for image in color_images:
+        for i, image in enumerate(color_images):
             everything_results = self.nn_model(image, device=DEVICE, retina_masks=True,
                                                imgsz=self.seg_params.image_size, conf=self.seg_params.confidence,
                                                iou=self.seg_params.iou)
@@ -85,12 +85,14 @@ class SegmentationMatcher:
             if filter_masks:
                 annotations, _ = prompt_process.filter_masks(annotations)
             mask_array = [ann["segmentation"] for ann in annotations]  # is of type np_array
+            if visualize:
+                prompt_process.plot(annotations=annotations, output_path=f'segmentation{i}.jpg')
 
             self.mask_arrays.append(mask_array)
 
         return self.mask_arrays
 
-    def segment_color_images_batch(self, filter_masks=True):
+    def segment_color_images_batch(self, filter_masks=True, visualize=False):
         DEVICE = self.device
         print("loaded NN model")
         color_images = self.color_images
@@ -109,6 +111,9 @@ class SegmentationMatcher:
             annotations2, _ = prompt_process.filter_masks(annotations2)
         mask_array1 = [ann["segmentation"] for ann in annotations1]  # is of type np_array
         mask_array2 = [ann["segmentation"] for ann in annotations2]  # is of type np_array
+        if visualize:
+                prompt_process.plot(annotations=annotations1, output_path=f'segmentation{1}.jpg')
+                prompt_process.plot(annotations=annotations2, output_path=f'segmentation{2}.jpg')
 
         self.mask_arrays = [mask_array1, mask_array2]
 
