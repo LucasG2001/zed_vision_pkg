@@ -203,7 +203,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # TODO: convert color scale
             print("starting segmentation")
             segmentation_parameters = SegmentationParameters(736, conf=0.5, iou=0.9)
-            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=2.0, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
+            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.25, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
             segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
             segmenter.preprocess_images(visualize=True)
@@ -211,7 +211,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # For this, we need to track the robots camera position and apply a iou search in n-dimensional space (curse of dimensionylity!!!)
             # We could thus preserve segmentation information.
             # This process may be sped up by using tracking
-            mask_arrays = segmenter.segment_color_images_batch(filter_masks=True)  # batch processing of two images saves meagre 0.3 seconds
+            mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=True)  # batch processing of two images saves meagre 0.3 seconds
             segmenter.generate_pointclouds_from_masks()
             global_pointclouds = segmenter.project_pointclouds_to_global()
             # next step also deletes the corresponded poointclouds from general pintcloud array

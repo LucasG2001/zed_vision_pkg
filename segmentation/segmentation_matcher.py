@@ -86,7 +86,7 @@ class SegmentationMatcher:
                 annotations, _ = prompt_process.filter_masks(annotations)
             mask_array = [ann["segmentation"] for ann in annotations]  # is of type np_array
             if visualize:
-                prompt_process.plot(annotations=annotations, output_path=f'segmentation{i}.jpg')
+                prompt_process.plot(annotations=prompt_process.everything_prompt(), output_path=f'segmentation{i}.jpg')
 
             self.mask_arrays.append(mask_array)
 
@@ -167,11 +167,12 @@ class SegmentationMatcher:
         print("creating pointcloud took ", pc_creating)
         print("cleaning pointcloud took ", postprocessing)
 
-    def project_pointclouds_to_global(self):
+    def project_pointclouds_to_global(self, visualize=True):
         for pc_array, transform in zip([self.pc_array_1, self.pc_array_2], self.transforms):
             for pc in pc_array:
                 pc.transform(transform)
-
+                if visualize:
+                        o3d.visualization.draw_geometries([pc])
         return self.pc_array_1, self.pc_array_2
 
     def match_segmentations(self, voxel_size=0.05, threshold=0.0):
@@ -216,9 +217,9 @@ class SegmentationMatcher:
             corresponding_pointclouds.append(pc_tuple)
             # We use the open3d convienience operator "+" to combine two pointclouds
             stitched_objects.append((pc_tuple[0] + pc_tuple[1]).uniform_down_sample(every_k_points = 2))
-            self.final_pc_array.extend(stitched_objects)
-            # OPTIONAL TODO: reconstrct the whole mesh from segmented pointcloud
-            if visualize:
-                o3d.visualization.draw_geometries(stitched_objects)
+        self.final_pc_array.extend(stitched_objects)
+        # OPTIONAL TODO: reconstrct the whole mesh from segmented pointcloud
+        if visualize:
+            o3d.visualization.draw_geometries(stitched_objects)
 
         return corresponding_pointclouds, stitched_objects
