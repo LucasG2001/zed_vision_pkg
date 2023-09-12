@@ -48,6 +48,21 @@ class SegmentationMatcher:
         self.nn_model = FastSAM(model_path)
 
     def set_images(self, color_images, depth_images):
+
+        """
+        sets depth and color images form segmentations
+
+        Args:
+            color_images: color image tuple in opencv (bgr, numpy format)
+            depth_images: depth image tuple in float32 format
+
+        Returns:
+            sets self.color_images and self.depth_images to new value
+
+        """
+        # Convert color scale from bgr to rgb (opencv -> open3d)
+        color_images[0] = color_images[0][:, :, ::-1]  # change color from rgb to bgr for o3d  
+        color_images[1] = color_images[1][:, :, ::-1]  # change color from rgb to bgr for o3d
         self.color_images = color_images
         self.depth_images = depth_images
         stacked_images = np.vstack([self.color_images[0], self.color_images[1]])
@@ -59,7 +74,7 @@ class SegmentationMatcher:
 
     def preprocess_images(self, visualize=False):
         for i, (depth_image, color_image) in enumerate(zip(self.depth_images, self.color_images)):
-            depth_mask = depth_image > self.max_depth * 10000
+            depth_mask = depth_image > self.max_depth
             depth_image[depth_mask] = 0  # should make depth image black at these points -> non-valid pointcloud
             # Set corresponding color image pixels to 0
             color_image[np.stack([depth_mask] * 3, axis=-1)] = 0
@@ -190,29 +205,30 @@ class SegmentationMatcher:
 
         return correspondences, scores, indx1, indx2
 
-    def align_corresponding_objects(self, correspondences, scores, visualize=False):
+    def align_corresponding_objects(self, correspondences, scores, visualize=False, use_icp=True):
         # ToDo: (Here or in other function) -> take correspondences and create single pointcloud
         #  out of them for ROS publishing
         corresponding_pointclouds = []
         stitched_objects = []
         for pc_tuple, iou in zip(correspondences, scores):
-            # align both pointclouds
-            max_dist = 2 * np.linalg.norm(pc_tuple[0].get_center() - pc_tuple[1].get_center())
-            # Estimate normals for both point clouds
-            pc_tuple[0].estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-            pc_tuple[1].estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
-            try:
-                # use default colored icp parameters
-                icp = o3d.pipelines.registration.registration_colored_icp(pc_tuple[0], pc_tuple[1],
-                                                                          max_correspondence_distance=max_dist)
-                # transform point cloud 1 onto point cloud 2
-                pc_tuple[0].transform(icp.transformation)
-            except RuntimeError as e:
-                # sometimes no correspondence is found. Then we simply overlay the untransformed point-clouds to avoid a
-                # complete stop of the program
-                print(f"Open3D Error: {e}")
-                print("proceeding by overlaying point-clouds without transformation")
-                print("proceeding by overlaying point-clouds without transformation")
+            if use_icp:
+                # align both pointclouds
+                max_dist = 1 * np.linalg.norm(pc_tuple[0].get_center() - pc_tuple[1].get_center())
+                # Estimate normals for both point clouds
+                pc_tuple[0].estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+                pc_tuple[1].estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+                try:
+                    # use default colored icp parameters
+                    icp = o3d.pipelines.registration.registration_colored_icp(pc_tuple[0], pc_tuple[1],
+                                                                            max_correspondence_distance=max_dist)
+                    # transform point cloud 1 onto point cloud 2
+                    pc_tuple[0].transform(icp.transformation)
+                except RuntimeError as e:
+                    # sometimes no correspondence is found. Then we simply overlay the untransformed point-clouds to avoid a
+                    # complete stop of the program
+                    print(f"Open3D Error: {e}")
+                    print("proceeding by overlaying point-clouds without transformation")
+                    print("proceeding by overlaying point-clouds without transformation")
 
             corresponding_pointclouds.append(pc_tuple)
             # We use the open3d convienience operator "+" to combine two pointclouds

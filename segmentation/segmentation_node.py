@@ -26,7 +26,7 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
         R = np.array(bbox.R) # Rotaiton Matrix of bounding box
         center = bbox.center
         sizes = bbox.extent
-        quat_R = (Rotation.from_matrix(np.eye(3,3))).as_quat()
+        quat_R = (Rotation.from_matrix(R)).as_quat()
         # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
         
 
@@ -103,7 +103,7 @@ class image_subscriber():
         
     def image_callback(self, img_data, index):
         try:
-            color_image = self.bridge.imgmsg_to_cv2(img_data, "bgr8")
+            color_image = self.bridge.imgmsg_to_cv2(img_data, "bgr8")  # use rgb8 for open3d color palette
         except CvBridgeError as e:
             print(e)
         self.color_images[index] = np.array(color_image, dtype=np.uint8)
@@ -200,10 +200,9 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             cv2.imwrite("images/depth2.png", depth_image2)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
-            # TODO: convert color scale
             print("starting segmentation")
-            segmentation_parameters = SegmentationParameters(736, conf=0.5, iou=0.9)
-            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.25, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
+            segmentation_parameters = SegmentationParameters(736, conf=0.4, iou=0.9)
+            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.5, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
             segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
             segmenter.preprocess_images(visualize=True)
@@ -213,23 +212,29 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # This process may be sped up by using tracking
             mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=True)  # batch processing of two images saves meagre 0.3 seconds
             segmenter.generate_pointclouds_from_masks()
-            global_pointclouds = segmenter.project_pointclouds_to_global()
+            global_pointclouds = segmenter.project_pointclouds_to_global(visualize=False)
             # next step also deletes the corresponded poointclouds from general pintcloud array
             correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0) 
             # Here we get the "stitched" objects matched by both cameras
             # TODO (IDEA) we could ICP the resultin pointclouds to find the bet matching geomtric primitives
-            corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, visualize=True)
+            corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, 
+                                                                                               visualize=True, use_icp=False)
             # get all unique pointclouds
             pointclouds = segmenter.get_final_pointclouds()
             bounding_boxes = []
-            for element in pointclouds:
+            for element in matched_objects:
                 element, _ =  element.remove_statistical_outlier(25, 0.5)
-                bounding_boxes.append(element.get_minimal_oriented_bounding_box(robust=True))
+                bbox = element.get_minimal_oriented_bounding_box(robust=True)
+                bbox.color = (1, 0, 0)  # open3d RED
+                bounding_boxes.append(bbox)
 
+            
             #ToDo: publish objects to planning scene
             collision_object = create_planning_scene_object_from_bbox(bounding_boxes)
             scene_publisher.publish(collision_object)
             print("published object to the planning scene")
+            matched_objects.extend(bounding_boxes)
+            o3d.visualization.draw_geometries(matched_objects)
 
         rate.sleep()
  
