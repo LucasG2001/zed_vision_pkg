@@ -235,10 +235,33 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             collision_objects = create_planning_scene_object_from_bbox(bounding_boxes)
             for object in collision_objects:
                 scene_publisher.publish(object)
-                rospy.sleep(0.1)
+                rospy.sleep(0.05)
             print("published object to the planning scene")
             matched_objects.extend(bounding_boxes)
             o3d.visualization.draw_geometries(matched_objects)
 
         rate.sleep()
  
+ # TODO: write a code which does the following steps: 
+ # PYTHON
+ # 1) take oriented bounding boxes and transforms them to be axis aligned. In praxis we just need the three coordinate 
+ #    intervals (xmin, xmax; ymin, ymax; zmin, zmax) and to publish them together with the transform 
+ # 2) publishes axis aligned bounding boxes to a "bbox" topic, and also publishes the corresponding 
+ #    transforms to a "transform" topic or does both at the same time
+ # ----------------------------------------------------------------------
+ # C++ 
+ # 1) Write a node that subscribes to the topic "ee-position"
+ # 2) subscribe to the "bounding box" topic and/or to the "transform" topic
+ # 3) create force field publisher
+ # 4) for each bounding box, compute the nearest point on the box w.r.t to the end effector
+ #  4.1) extract the three coordinate intervals in x, y, and z direction which delimit the bounding box
+ #  4.2 transform the ee-position to be in the same frame as the axis aligned bounding boxes
+ #  4.3) For each coordinate interval (x,y,z) do: (and use p' as the projected point)
+ #          if ee[x] < max(x) && ee[x] > min(x)
+ #              p' = ee[x]
+ #          else if ee[x] > max(x):
+ #              p' = max(x)
+ #          else if ee[x] < min(x):
+ #              p' = min(x)
+ #  4.4) Compute F_i in dependence of p' and the end-effector
+ # 5) Add up all F_i and publish them to a "Force Field" topic
