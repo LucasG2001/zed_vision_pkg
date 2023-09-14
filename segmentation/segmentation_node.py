@@ -13,41 +13,87 @@ from sensor_msgs.msg import Image, CameraInfo
 import pyzed.sl as sl
 from cv_bridge import CvBridge, CvBridgeError
 from moveit_msgs.msg import CollisionObject
+from moveit_msgs.msg import PlanningSceneWorld
 from shape_msgs.msg import SolidPrimitive
 from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation
+from tf2_msgs.msg import TFMessage
+from geometry_msgs.msg import TransformStamped
+def homogenous_transform(R, t):
+    homogeneous_matrix = np.eye(4, dtype=np.float64)
+    homogeneous_matrix[0:3, 0:3] = R
+    homogeneous_matrix[0:3, 3:4] = t
 
+    return homogeneous_matrix
+
+def inverse_transform(R, t):
+    H_inv = np.eye(4, dtype=np.float64)
+    H_inv[0:3, 0:3] = np.transpose(R)
+    H_inv[0:3, 3:4] = -np.transpose(R) @ t
+
+    return H_inv
+
+def get_bboxes_for_force_field(bbox, primitive, R, t, index):
+    aligned_collision_object = CollisionObject()
+    transform = TransformStamped()
+    # transform oriented bounding box to axis aligned bounding box with center at (0,0,0)
+    transform_inv = inverse_transform(R, t)
+    aligned_bounding_box = o3d.geometry.OrientedBoundingBox(bbox)
+    aligned_bounding_box.transform(transform_inv) # now the bbox should be axis aligned and centered at origin
+    # fill transform
+    position = aligned_bounding_box.center
+    quat_R = (Rotation.from_matrix(R)).as_quat()
+    transform.transform.translation.x , transform.transform.translation.y, 
+    transform.transform.translation.z = position
+    transform.transform.rotation.x, transform.transform.rotation.y, 
+    transform.transform.rotation.z, transform.transform.rotation.w = quat_R
+    # fill pose
+    pose = Pose()
+    pose.position.x, pose.position.y, pose.position.z = position
+    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
+    # fill collision object
+    aligned_collision_object.id = str(index)
+    aligned_collision_object.primitives.append(primitive)
+    aligned_collision_object.primitive_poses.append(pose)
+    aligned_collision_object.operation = CollisionObject.ADD
+    
+    return aligned_collision_object, transform
 
 def create_planning_scene_object_from_bbox(bboxes, id = "1"):
+    transforms_msg = TFMessage()
+    force_field_planning_scene = PlanningSceneWorld()
     collision_objects = []
     for i, bbox in enumerate(bboxes):
-        collision_object = CollisionObject()
-        collision_object.header.frame_id = "panda_link0"
+        oriented_collision_object = CollisionObject()
+        oriented_collision_object.header.frame_id = "panda_link0"
         vertices = bbox.get_box_points() # o3d vector
         R = np.array(bbox.R) # Rotaiton Matrix of bounding box
         center = bbox.center
         sizes = bbox.extent
         quat_R = (Rotation.from_matrix(R)).as_quat()
-        # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
-        
-
-        pose = Pose()
-        pose.position.x, pose.position.y, pose.position.z = center 
-        pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
-
+        # create corresponding primitive 
         primitive = SolidPrimitive()
         primitive.type = SolidPrimitive.BOX
         primitive.dimensions = sizes
-        # collision_object.pose.append(pose) # this is the pose to which everything else is defined relative?
-        # TODO: get id's to be consotent throughout segmentations nad the planning scene
-        collision_object.id = str(i)
-        collision_object.primitives.append(primitive)
-        collision_object.primitive_poses.append(pose)
-        collision_object.operation = CollisionObject.ADD
-        collision_objects.append(collision_object)
+        # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
+        pose = Pose()
+        pose.position.x, pose.position.y, pose.position.z = center 
+        pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
+        # TODO: get id's to be consotent throughout segmentations and the planning scene
+        oriented_collision_object.id = str(i)
+        oriented_collision_object.primitives.append(primitive)
+        oriented_collision_object.primitive_poses.append(pose)
+        oriented_collision_object.operation = CollisionObject.ADD
+        collision_objects.append(oriented_collision_object)
+
+        # fill axis aligned bounding boxes for Force field genreation
+        aligned_bbox, ee_transform = get_bboxes_for_force_field(bbox, primitive, R, center, i)
+        force_field_planning_scene.collision_objects.append(aligned_bbox)
+        transforms_msg.transforms.append(ee_transform)
+
         
 
-    return collision_objects
+    return collision_objects, force_field_planning_scene, transforms_msg
 
 
 
@@ -115,17 +161,12 @@ class image_subscriber():
         return self.color_images, self.depth_images
 
 
-def homogenous_transform(R, t):
-    homogeneous_matrix = np.eye(4, dtype=np.float64)
-    homogeneous_matrix[0:3, 0:3] = R
-    homogeneous_matrix[0:3, 3:4] = t
-
-    return homogeneous_matrix
-
 if __name__ == "__main__": # This is not a function but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
     scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1)
+    force_field_publisher = rospy.Publisher("/force_bboxes", PlanningSceneWorld, queue_size=1)
+    transform_publisher = rospy.Publisher("/ee_transforms", TFMessage, queue_size=1)
     image_subscriber = image_subscriber()
     run_segmentation = False
     depth_images = []
@@ -232,12 +273,16 @@ if __name__ == "__main__": # This is not a function but an if clause !!
 
             
             #ToDo: publish objects to planning scene
-            collision_objects = create_planning_scene_object_from_bbox(bounding_boxes)
+            collision_objects, force_field_planning_scene, transforms = create_planning_scene_object_from_bbox(bounding_boxes)
             for object in collision_objects:
                 scene_publisher.publish(object)
                 rospy.sleep(0.05)
             print("published object to the planning scene")
+            # transform axis aligned bboxes and corrresponding ee-transforms to the force field planner
+            force_field_publisher.publish(force_field_planning_scene)
+            transform_publisher.publish(transforms)
             matched_objects.extend(bounding_boxes)
+            print("visualizing detected planning scene")
             o3d.visualization.draw_geometries(matched_objects)
 
         rate.sleep()
