@@ -19,6 +19,7 @@ from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation
 from tf2_msgs.msg import TFMessage
 from geometry_msgs.msg import TransformStamped
+
 def homogenous_transform(R, t):
     homogeneous_matrix = np.eye(4, dtype=np.float64)
     homogeneous_matrix[0:3, 0:3] = R
@@ -29,7 +30,7 @@ def homogenous_transform(R, t):
 def inverse_transform(R, t):
     H_inv = np.eye(4, dtype=np.float64)
     H_inv[0:3, 0:3] = np.transpose(R)
-    H_inv[0:3, 3:4] = -np.transpose(R) @ t
+    H_inv[0:3, 3] = -np.transpose(R) @ t
 
     return H_inv
 
@@ -39,14 +40,13 @@ def get_bboxes_for_force_field(bbox, primitive, R, t, index):
     # transform oriented bounding box to axis aligned bounding box with center at (0,0,0)
     transform_inv = inverse_transform(R, t)
     aligned_bounding_box = o3d.geometry.OrientedBoundingBox(bbox)
-    aligned_bounding_box.transform(transform_inv) # now the bbox should be axis aligned and centered at origin
+    aligned_bounding_box.translate(np.zeros([3,1]), relative=False) # now the bbox should be axis aligned and centered at origin
+    aligned_bounding_box.rotate(np.transpose(R))
     # fill transform
     position = aligned_bounding_box.center
     quat_R = (Rotation.from_matrix(R)).as_quat()
-    transform.transform.translation.x , transform.transform.translation.y, 
-    transform.transform.translation.z = position
-    transform.transform.rotation.x, transform.transform.rotation.y, 
-    transform.transform.rotation.z, transform.transform.rotation.w = quat_R
+    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = position
+    transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = quat_R
     # fill pose
     pose = Pose()
     pose.position.x, pose.position.y, pose.position.z = position
@@ -287,13 +287,15 @@ if __name__ == "__main__": # This is not a function but an if clause !!
 
         rate.sleep()
  
- # TODO: write a code which does the following steps: 
+ # Done: write a code which does the following steps: 
  # PYTHON
+ # DONE
  # 1) take oriented bounding boxes and transforms them to be axis aligned. In praxis we just need the three coordinate 
  #    intervals (xmin, xmax; ymin, ymax; zmin, zmax) and to publish them together with the transform 
  # 2) publishes axis aligned bounding boxes to a "bbox" topic, and also publishes the corresponding 
  #    transforms to a "transform" topic or does both at the same time
  # ----------------------------------------------------------------------
+# TODO: write a code which does the following steps:
  # C++ 
  # 1) Write a node that subscribes to the topic "ee-position"
  # 2) subscribe to the "bounding box" topic and/or to the "transform" topic
