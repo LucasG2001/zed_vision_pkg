@@ -38,18 +38,17 @@ def get_bboxes_for_force_field(bbox, primitive, R, t, index):
     aligned_collision_object = CollisionObject()
     transform = TransformStamped()
     # transform oriented bounding box to axis aligned bounding box with center at (0,0,0)
-    transform_inv = inverse_transform(R, t)
     aligned_bounding_box = o3d.geometry.OrientedBoundingBox(bbox)
     aligned_bounding_box.translate(np.zeros([3,1]), relative=False) # now the bbox should be axis aligned and centered at origin
     aligned_bounding_box.rotate(np.transpose(R))
     # fill transform
     position = aligned_bounding_box.center
     quat_R = (Rotation.from_matrix(R)).as_quat()
-    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = position
+    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = -t # we want the bbox at 0 0 0 but need the corresponding transform
     transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = quat_R
     # fill pose
     pose = Pose()
-    pose.position.x, pose.position.y, pose.position.z = position
+    pose.position.x, pose.position.y, pose.position.z = position 
     pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
     # fill collision object
     aligned_collision_object.id = str(index)
@@ -66,8 +65,7 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
     for i, bbox in enumerate(bboxes):
         oriented_collision_object = CollisionObject()
         oriented_collision_object.header.frame_id = "panda_link0"
-        vertices = bbox.get_box_points() # o3d vector
-        R = np.array(bbox.R) # Rotaiton Matrix of bounding box
+        R = np.array(bbox.R) # Rotation Matrix of bounding box
         center = bbox.center
         sizes = bbox.extent
         quat_R = (Rotation.from_matrix(R)).as_quat()
@@ -77,9 +75,9 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
         primitive.dimensions = sizes
         # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
         pose = Pose()
-        pose.position.x, pose.position.y, pose.position.z = center 
+        pose.position.x, pose.position.y, pose.position.z = center # should generally not be 0 0 0 here
         pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
-        # TODO: get id's to be consotent throughout segmentations and the planning scene
+        # TODO: get id's to be consistent throughout segmentations and the planning scene
         oriented_collision_object.id = str(i)
         oriented_collision_object.primitives.append(primitive)
         oriented_collision_object.primitive_poses.append(pose)
@@ -269,7 +267,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 element, _ =  element.remove_statistical_outlier(25, 0.5)
                 bbox = element.get_minimal_oriented_bounding_box(robust=True)
                 bbox.color = (1, 0, 0)  # open3d RED
-                bounding_boxes.append(bbox)
+                bounding_boxes.append(bbox) # here bbox center is not 0 0 0
 
             
             #ToDo: publish objects to planning scene
