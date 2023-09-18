@@ -36,22 +36,26 @@ def inverse_transform(R, t):
 
 def get_bboxes_for_force_field(bbox, primitive, R, t, index):
     aligned_collision_object = CollisionObject()
+    aligned_collision_object.header.frame_id = "panda_link0"
     transform = TransformStamped()
     # transform oriented bounding box to axis aligned bounding box with center at (0,0,0)
     aligned_bounding_box = o3d.geometry.OrientedBoundingBox(bbox)
-    aligned_bounding_box.translate(np.zeros([3,1]), relative=False) # now the bbox should be axis aligned and centered at origin
-    aligned_bounding_box.rotate(np.transpose(R))
+    inv_R = np.transpose(R)
+    aligned_bounding_box.rotate(R=inv_R)
+    aligned_bounding_box.translate(-inv_R @ t, relative=True) # now the bbox should be axis aligned and centered at origin
+    orientation = np.array(aligned_bounding_box.R)
+    # In this quaternion we save the necessary transform to align the bounding box
+    transform_quat = Rotation.from_matrix(inv_R).as_quat()
     # fill transform
     position = aligned_bounding_box.center
-    quat_R = (Rotation.from_matrix(R)).as_quat()
-    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = -t # we want the bbox at 0 0 0 but need the corresponding transform
-    transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = quat_R
+    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = -inv_R @ t # we want the bbox at 0 0 0 but need the corresponding transform
+    transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = transform_quat
     # fill pose
     pose = Pose()
     pose.position.x, pose.position.y, pose.position.z = position 
-    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
+    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = Rotation.from_matrix(orientation).as_quat() 
     # fill collision object
-    aligned_collision_object.id = str(index)
+    aligned_collision_object.id = "aligned nr. " + str(index)
     aligned_collision_object.primitives.append(primitive)
     aligned_collision_object.primitive_poses.append(pose)
     aligned_collision_object.operation = CollisionObject.ADD
@@ -158,7 +162,7 @@ class image_subscriber():
     def get_images(self):
         return self.color_images, self.depth_images
 
-
+# TODO: add argc, argv to choose levels of visualization (none, debug, user, visualize all)
 if __name__ == "__main__": # This is not a function but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
@@ -251,7 +255,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # For this, we need to track the robots camera position and apply a iou search in n-dimensional space (curse of dimensionylity!!!)
             # We could thus preserve segmentation information.
             # This process may be sped up by using tracking
-            mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=True)  # batch processing of two images saves meagre 0.3 seconds
+            mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=False)  # batch processing of two images saves meagre 0.3 seconds
             segmenter.generate_pointclouds_from_masks()
             global_pointclouds = segmenter.project_pointclouds_to_global(visualize=False)
             # next step also deletes the corresponded poointclouds from general pintcloud array
@@ -278,6 +282,12 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             print("published object to the planning scene")
             # transform axis aligned bboxes and corrresponding ee-transforms to the force field planner
             force_field_publisher.publish(force_field_planning_scene)
+            #For debug
+            """
+            for object in force_field_planning_scene.collision_objects:
+                scene_publisher.publish(object)
+                rospy.sleep(0.05)
+            """ # End of debug
             transform_publisher.publish(transforms)
             matched_objects.extend(bounding_boxes)
             print("visualizing detected planning scene")
