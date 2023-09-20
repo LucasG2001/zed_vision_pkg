@@ -68,10 +68,10 @@ if __name__ == "__main__":
                      [0, 0, 0, 1]])
 
     # Camera frame in checkerboard frame
-    T_SC = np.array([[0.59654493, 0.67077667, -0.44067313, 0.65222527],
-                     [-0.80140306, 0.46812619, -0.37230498, 0.74315646],
-                     [-0.04344286, 0.57525345, 0.81682078, -0.9906735],
-                     [0., 0., 0., 1.]])
+    T_SC = np.array([[-0.66047374, -0.63002775,  0.40845987, -0.29969261],
+                     [ 0.75077269, -0.54637578,  0.37123291, -0.50277301],
+                     [-0.01071446,  0.5518501 ,  0.83387449, -0.90816649],
+                     [ 0.        ,  0.        ,  0.        ,  1.        ]])
 
     Transform = T_0S @ T_SC
 
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     init_params.camera_resolution = sl.RESOLUTION.HD720  # Use 720 video mode
     init_params.coordinate_units = sl.UNIT.METER  # Set coordinate units
     init_params.coordinate_system = sl.COORDINATE_SYSTEM.IMAGE
-    init_params.set_from_serial_number(32689769)
+    init_params.set_from_serial_number(34783283)
 
     # If applicable, use the SVO given as parameter
     # Otherwise use ZED live stream

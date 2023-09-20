@@ -62,6 +62,33 @@ def get_bboxes_for_force_field(bbox, primitive, R, t, index):
     
     return aligned_collision_object, transform
 
+def add_mounting_table():
+    """
+    This function returns a collision object corresponding to the table the robot is mounted on
+    we can return the mounting table both for the force field node and the planning scene, without transformation, since
+    for the force generation we need only the dimensions anyway (and can assume the box to be at 0 0 0, just transforming the EE)
+    """
+    table = CollisionObject()
+    table.header.frame_id = "panda_link0"
+    transform = TransformStamped()
+    pose = Pose()
+    pose.position.x, pose.position.y, pose.position.z = [0.45, 0.3, -0.02]  # pose of table center 
+    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = [0, 0, 0, 1]
+    # fill collision object
+    table.id = "mounting_table"
+    # create corresponding primitive 
+    primitive = SolidPrimitive()
+    primitive.type = SolidPrimitive.BOX
+    primitive.dimensions = [0.9, 1.5, 0.04]
+    table.primitives.append(primitive)
+    table.primitive_poses.append(pose)
+    table.operation = CollisionObject.ADD
+    # create corresponding transform 
+    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = [-0.45, -0.3, 0.02]
+    transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = [0, 0, 0, 1]
+    
+    return table, transform
+
 def create_planning_scene_object_from_bbox(bboxes, id = "1"):
     transforms_msg = TFMessage()
     force_field_planning_scene = PlanningSceneWorld()
@@ -92,9 +119,14 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
         aligned_bbox, ee_transform = get_bboxes_for_force_field(bbox, primitive, R, center, i)
         force_field_planning_scene.collision_objects.append(aligned_bbox)
         transforms_msg.transforms.append(ee_transform)
+    
+    # get the mounting table in any case
+    table_object, table_transform = add_mounting_table()
+    collision_objects.append(table_object)
+    force_field_planning_scene.collision_objects.append(table_object)
+    transforms_msg.append(table_transform)
 
         
-
     return collision_objects, force_field_planning_scene, transforms_msg
 
 
@@ -166,8 +198,9 @@ class image_subscriber():
 if __name__ == "__main__": # This is not a function but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
-    scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1)
-    force_field_publisher = rospy.Publisher("/force_bboxes", PlanningSceneWorld, queue_size=1)
+    # TODO: scene and force_field publisher can be combined into one
+    scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1) # adds object to the planning scene
+    force_field_publisher = rospy.Publisher("/force_bboxes", PlanningSceneWorld, queue_size=1) # publishes planning scene to force field generation node
     transform_publisher = rospy.Publisher("/ee_transforms", TFMessage, queue_size=1)
     image_subscriber = image_subscriber()
     run_segmentation = False
@@ -193,16 +226,16 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                      [0, 0, 0, 1]])
     
     # camera higher up is camera 0
-    rotations = {"camera0": np.array([[ 0.26882385, -0.86482579,  0.4240402],
-                                      [ 0.96318545,  0.24262314, -0.11579204],
-                                      [-0.00274202,  0.43955702,  0.8982105]]),
+    rotations = {"camera0": np.array([[-0.66047374, -0.63002775,  0.40845987],
+                                      [ 0.75077269, -0.54637578,  0.37123291],
+                                      [-0.01071446,  0.5518501 ,  0.83387449]]),
 
-                 "camera1": np.array([[ 0.26074776,  0.85460937, -0.44905838],
-                                      [-0.96538491,  0.22767297, -0.12726741],
-                                      [-0.00652547,  0.46669888,  0.88439221]])}
+                 "camera1": np.array( [[ 0.52330914,  0.72215182, -0.45237627],
+                                       [-0.85187145,  0.42994044, -0.29910909],
+                                       [-0.02150732,  0.54189295,  0.84017228]])}
 
-    translations = {"camera0": np.array([[-0.44143352], [0.25198399], [-0.96908148]]),
-                    "camera1": np.array([[0.6263783], [0.53805005], [-0.77825917]])}
+    translations = {"camera0": np.array([[-0.29969261], [-0.50277301], [-0.90816649]]),
+                    "camera1": np.array([[0.5073233], [0.54067325], [-0.75405872]])}
 
     H1 = T_0S @ homogenous_transform(rotations["camera0"], translations["camera0"])  # T_0S @ T_S_c1
     H2 = T_0S @ homogenous_transform(rotations["camera1"], translations["camera1"])  # T_0S @ T_S_c2
