@@ -124,7 +124,7 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
     table_object, table_transform = add_mounting_table()
     collision_objects.append(table_object)
     force_field_planning_scene.collision_objects.append(table_object)
-    transforms_msg.append(table_transform)
+    transforms_msg.transforms.append(table_transform)
 
         
     return collision_objects, force_field_planning_scene, transforms_msg
