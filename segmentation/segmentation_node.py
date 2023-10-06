@@ -226,16 +226,18 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                      [0, 0, 0, 1]])
     
     # camera higher up is camera 0
-    rotations = {"camera0": np.array([[-0.66047374, -0.63002775,  0.40845987],
-                                      [ 0.75077269, -0.54637578,  0.37123291],
-                                      [-0.01071446,  0.5518501 ,  0.83387449]]),
+    # 0 is long/front and SN 32689769
+    # 1 is short/rear
+    rotations = {"camera0": np.array([[-0.76428429, -0.49286948,  0.41587161],
+                                      [ 0.64158762, -0.64622265,  0.41323312],
+                                      [ 0.06507566,  0.58264566,  0.81011678]]),
 
-                 "camera1": np.array( [[ 0.52330914,  0.72215182, -0.45237627],
-                                       [-0.85187145,  0.42994044, -0.29910909],
-                                       [-0.02150732,  0.54189295,  0.84017228]])}
+                 "camera1": np.array([[ 0.15479909,  0.90626099, -0.39335513],
+                                      [-0.98774074,  0.1338553 , -0.08031809],
+                                      [-0.02013648,  0.40096605,  0.91587158]])}
 
-    translations = {"camera0": np.array([[-0.29969261], [-0.50277301], [-0.90816649]]),
-                    "camera1": np.array([[0.5073233], [0.54067325], [-0.75405872]])}
+    translations = {"camera0": np.array([[-0.28717724], [-0.53138382], [-0.90213821]]),
+                    "camera1": np.array([[0.50194345], [0.40890761], [-0.74204803]])}
 
     H1 = T_0S @ homogenous_transform(rotations["camera0"], translations["camera0"])  # T_0S @ T_S_c1
     H2 = T_0S @ homogenous_transform(rotations["camera1"], translations["camera1"])  # T_0S @ T_S_c2
