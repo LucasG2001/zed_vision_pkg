@@ -28,8 +28,11 @@ Preparation:
    NOTE: the segmentation is not hugely reliable, especially on feature-less or transparent surfces like white tables or glasses. To combat this, add some clutter and/or increase the lighting. In brighter conditions the             segmentation generally works better. Rarely, it can be completely off, in that case delete the planning scene and run a new segmentaiton.
    NOTE: At the moment the 3D-model of the mounting table is automatically added. In this repo we obviously use our table, so be careful if your setup deviates significantly. You can change the paremeters in the
          function segmentation_node.py -> add_mounting_table()
-5) If you want to activate the force field, inspect the planning scene and correct any unwanted obstacels. For instance, delete the bounding box representing the robot, as it will block all movement. You can also delete       any other artifacts or unwanted or unnecessary objects (for instance outside of the actual worksapce). DO NOT PUBLISH it YET!!
-6) When you are ready, run rosrun goal_state_publisher force field. Once the node is up, pblish your planning scene. From now on, all the bounding boxes in the planning scene generate a force field at their correspondnig
+5) If you want to activate the force field, inspect the planning scene and correct any unwanted obstacels. For instance, delete the bounding box representing the robot, as it will block all movement. You can also delete any other artifacts or unwanted or unnecessary objects (for instance outside of the actual worksapce). DO NOT PUBLISH it YET!!
+6) When you are ready, run <rosrun goal_state_publisher force field>. Once the node is up, pblish your planning scene. From now on, all the bounding boxes in the planning scene generate a force field at their correspondnig
    real word locations when the end efector moves near it.
-7) Move around and test! Ideally you can test this first in free-floating mode (with 0 stifness) and manually guide the EE around. Then you can feel the force fields for yourself. Use the left hand to guide, since it         will evade your right hand, or try to push it into an object like a jedi :D (it should get blocked) 
+7) Move around and test! Ideally you can test this first in free-floating mode (with 0 stifness) and manually guide the EE around. Then you can feel the force fields for yourself. Use the left hand to guide, since it  will evade your right hand, or try to push it into an object like a jedi :D (it should get blocked)
+
+Note:
+-Presently, only the end-effector point between the finger grippers is avoided, so you will still collide with the sides of the Franka Gripper!
 
