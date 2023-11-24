@@ -127,14 +127,14 @@ class SegmentationMatcher:
         mask_array1 = [ann["segmentation"] for ann in annotations1]  # is of type np_array
         mask_array2 = [ann["segmentation"] for ann in annotations2]  # is of type np_array
         if visualize:
-                prompt_process.plot(annotations=annotations1, output_path=f'segmentation{1}.jpg')
-                prompt_process.plot(annotations=annotations2, output_path=f'segmentation{2}.jpg')
+                prompt_process.plot(annotations=annotations1, output_path=f'segmentation1.jpg')
+                prompt_process.plot(annotations=annotations2, output_path=f'segmentation2.jpg')
 
         self.mask_arrays = [mask_array1, mask_array2]
 
         return self.mask_arrays
 
-    def generate_pointclouds_from_masks(self):
+    def generate_pointclouds_from_masks(self, visualize=False):
         postprocessing = 0
         pc_creating = 0
         rgbd_creating = 0
@@ -154,6 +154,8 @@ class SegmentationMatcher:
                                                                               depth_scale=self.depth_scale,
                                                                               depth_trunc=self.max_depth,
                                                                               convert_rgb_to_intensity=False)
+                if visualize:
+                    o3d.visualization.draw_geometries([rgbd_img])
 
                 pc = o3d.geometry.PointCloud.create_from_rgbd_image(image=rgbd_img, intrinsic=intrinsic)
                 rgbd_time = time.time() - start_time

@@ -13,7 +13,7 @@ from sensor_msgs.msg import Image, CameraInfo
 import pyzed.sl as sl
 from cv_bridge import CvBridge, CvBridgeError
 from moveit_msgs.msg import CollisionObject
-from moveit_msgs.msg import PlanningSceneWorld
+from moveit_msgs.msg import PlanningSceneWorld, PlanningScene
 from shape_msgs.msg import SolidPrimitive
 from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation
@@ -202,6 +202,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1) # adds object to the planning scene
     force_field_publisher = rospy.Publisher("/force_bboxes", PlanningSceneWorld, queue_size=1) # publishes planning scene to force field generation node
     transform_publisher = rospy.Publisher("/ee_transforms", TFMessage, queue_size=1)
+    moveit_planning_scene_publisher = rospy.Publisher("/move_group/monitored_planning_scene", PlanningScene, queue_size=1)
     image_subscriber = image_subscriber()
     run_segmentation = False
     depth_images = []
@@ -228,16 +229,18 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     # camera higher up is camera 0
     # 0 is long/front and SN 32689769
     # 1 is short/rear
-    rotations = {"camera0": np.array([[-0.76428429, -0.49286948,  0.41587161],
-                                      [ 0.64158762, -0.64622265,  0.41323312],
-                                      [ 0.06507566,  0.58264566,  0.81011678]]),
+    rotations = {"camera0": np.array([[-0.74319018, -0.56269495,  0.36199826],
+                                      [ 0.66867618, -0.64344379,  0.37262884],
+                                      [ 0.02324917,  0.51899371,  0.85446182]]),
 
-                 "camera1": np.array([[ 0.15479909,  0.90626099, -0.39335513],
-                                      [-0.98774074,  0.1338553 , -0.08031809],
-                                      [-0.02013648,  0.40096605,  0.91587158]])}
+                 "camera1": np.array([[ 0.12160326,  0.87553127, -0.46760843],
+                                      [-0.98941778,  0.06935403, -0.12744595],
+                                      [-0.07915238,  0.47815794,  0.87469988]])}
+    
+                   
 
-    translations = {"camera0": np.array([[-0.28717724], [-0.53138382], [-0.90213821]]),
-                    "camera1": np.array([[0.50194345], [0.40890761], [-0.74204803]])}
+    translations = {"camera0": np.array([[-0.34671173], [-0.45521386], [-0.89451421]]),
+                    "camera1": np.array([[0.54132945], [0.61558458], [-1.21148224]])}
 
     H1 = T_0S @ homogenous_transform(rotations["camera0"], translations["camera0"])  # T_0S @ T_S_c1
     H2 = T_0S @ homogenous_transform(rotations["camera1"], translations["camera1"])  # T_0S @ T_S_c2
@@ -258,7 +261,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     print("starting loop")
     while not rospy.is_shutdown():
         print("looping")
-        user_input = input("Enter 's' to segment the image. See the ZED-Ros node for a preview. Press 'x' to shut down")
+        user_input = input("Enter 's' to segment the image. See the ZED-Ros node for a preview. Press 'x' to shut down. Press 'c' to clear scene ")
         if user_input.lower() == 'x':  # .lower() makes comparison case
             rospy.signal_shutdown("User requested shutdown")
         if user_input.lower() == 's':
@@ -282,23 +285,23 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             cv2.destroyAllWindows()
             print("starting segmentation")
             segmentation_parameters = SegmentationParameters(736, conf=0.4, iou=0.9)
-            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=1.5, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
+            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=2.0, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
             segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
-            segmenter.preprocess_images(visualize=True)
+            segmenter.preprocess_images(visualize=False)
             # TODO: by mounting a camera on the robot we could reconstruct the entire scene by matching multiple perspectives.
             # For this, we need to track the robots camera position and apply a iou search in n-dimensional space (curse of dimensionylity!!!)
             # We could thus preserve segmentation information.
             # This process may be sped up by using tracking
             mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=False)  # batch processing of two images saves meagre 0.3 seconds
-            segmenter.generate_pointclouds_from_masks()
+            segmenter.generate_pointclouds_from_masks(visualize=False)
             global_pointclouds = segmenter.project_pointclouds_to_global(visualize=False)
             # next step also deletes the corresponded poointclouds from general pintcloud array
             correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0) 
             # Here we get the "stitched" objects matched by both cameras
             # TODO (IDEA) we could ICP the resultin pointclouds to find the bet matching geomtric primitives
             corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, 
-                                                                                               visualize=True, use_icp=False)
+                                                                                               visualize=True, use_icp=True)
             # get all unique pointclouds
             pointclouds = segmenter.get_final_pointclouds()
             bounding_boxes = []
@@ -327,6 +330,10 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             matched_objects.extend(bounding_boxes)
             print("visualizing detected planning scene")
             o3d.visualization.draw_geometries(matched_objects)
+        if user_input.lower() == 'c':
+            empty_scene = PlanningScene()
+            empty_scene.is_diff = False
+            moveit_planning_scene_publisher.publish(empty_scene)
 
         rate.sleep()
  

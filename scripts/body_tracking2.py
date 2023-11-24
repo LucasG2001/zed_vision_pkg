@@ -56,6 +56,22 @@ def get_hand_keypoints(body):
     left_hand_pos = np.mean(left_hand_matrix, axis=0)
     right_hand_pos = np.mean(right_hand_matrix, axis=0)
 
+    # print("shape of hand positions is ", np.shape(left_hand_pos))
+    return right_hand_pos, left_hand_pos
+
+def get_hand_keypoints_38(body):
+    # initialize values
+    left_hand_matrix = np.array(body.keypoint[16]).reshape([1, 3])
+    right_hand_matrix = np.array(body.keypoint[17]).reshape([1, 3])
+    for i in range(30, 37, 2):
+        keypoint_left = np.array(body.keypoint[i]).reshape([1, 3])
+        keypoint_right = np.array(body.keypoint[i + 1]).reshape([1, 3])  # loops from 50 to 70 (69 is last)
+        np.vstack((left_hand_matrix, keypoint_left))  # left hand
+        np.vstack((right_hand_matrix, keypoint_right))  # left hand
+
+    left_hand_pos = np.mean(left_hand_matrix, axis=0)
+    right_hand_pos = np.mean(right_hand_matrix, axis=0)
+
     print("shape of hand positions is ", np.shape(left_hand_pos))
     return right_hand_pos, left_hand_pos
 
@@ -68,14 +84,13 @@ if __name__ == "__main__":
                      [0, 0, 0, 1]])
 
     # Camera frame in checkerboard frame
-    T_SC = np.array( [[ 0.87170456,  0.4435277 , -0.20836106,  0.27590741],
-                      [-0.48470065,  0.71784717, -0.49976066,  0.82930834],
-                      [-0.0720863 ,  0.53663639,  0.84072882, -1.09655875],
-                      [ 0.        ,  0.        ,  0.        ,  1.        ]])
+    T_SC = np.array([[ 0.12160326,  0.87553127, -0.46760843,  0.54132945],
+                     [-0.98941778,  0.06935403, -0.12744595,  0.61558458],
+                     [-0.07915238,  0.47815794,  0.87469988, -1.21148224],
+                     [ 0.        ,  0.        ,  0.        ,  1.        ]])
 
     Transform = T_0S @ T_SC
-
-    #  initalize node
+    #  initalize no
     rospy.init_node("body_tracking_node")
     # initialze publisher for hand keypoint
     left_hand_publisher = rospy.Publisher('cartesian_impedance_controller/left_hand', Point, queue_size=10)
@@ -95,7 +110,8 @@ if __name__ == "__main__":
     init_params.camera_resolution = sl.RESOLUTION.HD720  # Use 720 video mode
     init_params.coordinate_units = sl.UNIT.METER  # Set coordinate units
     init_params.coordinate_system = sl.COORDINATE_SYSTEM.IMAGE
-    init_params.set_from_serial_number(34783283)
+    init_params.set_from_serial_number(34226204) #34783283
+    init_params.depth_mode = sl.DEPTH_MODE.ULTRA
 
     # If applicable, use the SVO given as parameter
     # Otherwise use ZED live stream
@@ -126,7 +142,8 @@ if __name__ == "__main__":
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
-    body_runtime_param.detection_confidence_threshold = 35
+    body_runtime_param.detection_confidence_threshold = 0.99 #confidence threshold actually doesnt work
+   
 
     # Get ZED camera information
     camera_info = zed.get_camera_information()
@@ -154,7 +171,7 @@ if __name__ == "__main__":
     # init 
     right_wrist = np.array([0, 0, 0])
     left_wrist = np.array([0, 0, 0])
-
+    # take first image
     while viewer.is_available():
 
         # Grab an image
@@ -166,43 +183,66 @@ if __name__ == "__main__":
             # translation = camera_pose.get_translation(py_translation.get())
             # print("camera is at ", translation, "\n")
             # print("and is rotated by ", rotation, "\n")
-            # Retrieve bodies
+            # Rtrieve bodies
             zed.retrieve_bodies(bodies, body_runtime_param)
-            for element in bodies.body_list:
-                # print("{} {}".format(element.id, element.position))
-                if (len(bodies.body_list) > 1):
-                    print("WARNING: more than one body detected!")
-                print("----------------------")
+            #for element in bodies.body_list:
+            # print("{} {}".format(element.id, element.position))
+            #if (len(bodies.body_list) > 1):
+            #    print("WARNING: more than one body detected! Proceeding with body at 0, deleting rest")
+            #    # del bodies.body_list[0:]
+            #    confidences = []
+            #    for i,body in enumerate(bodies.body_list):
+            #            confidences.append(body.confidence)
+            #    max_value = max(confidences)
+            #    max_confidence_index = confidences.index(max_value)
+            #    element = bodies.body_list[max_confidence_index]
+            #    print(element.confidence)
+            #else: 
+            #    element = bodies.body_list[0]   
+            for i, candidate in enumerate(bodies.body_list):
+                if candidate.confidence < 95:
+                    del bodies.body_list[i]
 
-                # update only if not nan, else use last value
-                if (not math.isnan(element.keypoint[16][0])):
-                    _, left_wrist = get_hand_keypoints(element)
-                if (not math.isnan(element.keypoint[17][0])):
-                    right_wrist, _ = get_hand_keypoints(element)
+            confidences = []     
+            for i,detected_body in enumerate(bodies.body_list):
+                      confidences.append(detected_body.confidence)
 
-                # transform hand position to base frame
-                right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
-                left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
-                print("left hand is at {}".format(left_wrist_transformed))
-                print("right hand is at {}".format(right_wrist_transformed))
-                left_hand_msg.x = left_wrist_transformed[0]
-                left_hand_msg.y = left_wrist_transformed[1]
-                left_hand_msg.z = left_wrist_transformed[2]
-                right_hand_msg.x = right_wrist_transformed[0]
-                right_hand_msg.y = right_wrist_transformed[1]
-                right_hand_msg.z = right_wrist_transformed[2]
-
-                # publish positions of the two hands
-                left_hand_publisher.publish(left_hand_msg)
-                right_hand_publisher.publish(right_hand_msg)
-                marker_array_msg = create_markers(left_hand_msg, right_hand_msg)
-                marker_publisher.publish(marker_array_msg)
-
-            # Update GL view
-            viewer.update_view(image, bodies)
+            if len(confidences) > 0:
+                max_value = max(confidences)
+                max_confidence_index = confidences.index(max_value)
+                element = bodies.body_list[max_confidence_index]
+                body_list = [element]
+            else:
+                body_list = []
+                continue
+       
+            print("----------------------")
+            # update only if not nan, else use last value
+            if (not math.isnan(element.keypoint[16][0])):
+                _, left_wrist = get_hand_keypoints(element)
+            if (not math.isnan(element.keypoint[17][0])):
+                right_wrist, _ = get_hand_keypoints(element)
+            # transform hand position to base frame
+            right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
+            left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
+            print("left hand is at {}".format(left_wrist_transformed - [0.09, 0.0, 0.03]))
+            print("right hand is at {}".format(right_wrist_transformed - [0.09, 0.0, 0.03]))
+            left_hand_msg.x = left_wrist_transformed[0] - 0.09 #static offset coming out of nowhere
+            left_hand_msg.y = left_wrist_transformed[1] - 0.0
+            left_hand_msg.z = left_wrist_transformed[2] - 0.03
+            right_hand_msg.x = right_wrist_transformed[0] - 0.09 #static offst coming out of nowhere
+            right_hand_msg.y = right_wrist_transformed[1] - 0.0
+            right_hand_msg.z = right_wrist_transformed[2] - 0.03
+            # publish positions of the two hands
+            left_hand_publisher.publish(left_hand_msg)
+            right_hand_publisher.publish(right_hand_msg)
+            marker_array_msg = create_markers(left_hand_msg, right_hand_msg)
+            marker_publisher.publish(marker_array_msg)
+            # Udate GL view
+            #viewer.update_view(image, bodies)
             # Update OCV view
             image_left_ocv = image.get_data()
-            cv_viewer.render_2D(image_left_ocv, image_scale, bodies.body_list, body_param.enable_tracking,
+            cv_viewer.render_2D(image_left_ocv, image_scale, body_list, body_param.enable_tracking,
                                 body_param.body_format)
             cv2.imshow("ZED | 2D View", image_left_ocv)
             cv2.waitKey(10)
