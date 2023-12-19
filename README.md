@@ -36,3 +36,16 @@ Preparation:
 Note:
 -Presently, only the end-effector point between the finger grippers is avoided, so you will still collide with the sides of the Franka Gripper!
 
+___________________________________________
+
+Update Dec 2023
+
+-added body_tracking_multicam script
+This script allows you to track the the hand with three zed cameras at once. Use the corresponding YAML files to set all transforms and launch with: "roslaunch zed_vision body_tracking_multicam.launch"
+Note:
+   1) Set the camera numbers, transforms and serial numbers in the YAML config file coherently
+   2) Starting takes a while, because each three nodes are started, each running in the same terminal and running body tracking on one camera. Every subsequent node has to wait for the previous node's camera to open before starting, so that
+      takes a while!
+   3) To publish the final /right_hand topic use "rosrun zed_vision hand_pose_filter". At the moment this (additional) node, takes the average of all recognized hand poses and publishes them, if a hand is recognized. It does not count empty
+      poses, i.e. the camera nodes transmit if a hand has been detected, and the average is run over all DETECTED hands.
+
