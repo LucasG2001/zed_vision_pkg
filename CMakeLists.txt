@@ -179,6 +179,7 @@ include_directories(
 catkin_install_python(PROGRAMS
    scripts/body_tracking2.py
    scripts/body_tracking_multicam.py
+   scripts/hand_pose_filter.py
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
  )
 
