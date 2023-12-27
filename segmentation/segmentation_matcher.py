@@ -85,6 +85,7 @@ class SegmentationMatcher:
     def set_segmentation_params(self, segmentation_params):
         self.seg_params = segmentation_params
 
+    #TODO: prompt_process/results need to be saved globally or similar, else they are created new all the time
     def segment_color_images(self, filter_masks=True, visualize=False):
         # ToDo: test if one can scam runtime of the model by combining the them at the same time
         # ToDo: Yes we can do exactly that
@@ -107,6 +108,7 @@ class SegmentationMatcher:
 
         return self.mask_arrays
 
+    #TODO: prompt_process/results need to be saved globally or similar, else they are created new all the time
     def segment_color_images_batch(self, filter_masks=True, visualize=False):
         DEVICE = self.device
         print("loaded NN model")
