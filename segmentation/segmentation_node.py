@@ -1,4 +1,4 @@
-#/usr/bin/python3
+#!/usr/bin/python3
 import sys
 import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +20,7 @@ from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation
 from tf2_msgs.msg import TFMessage
 from geometry_msgs.msg import TransformStamped
+import time
 
 def homogenous_transform(R, t):
     homogeneous_matrix = np.eye(4, dtype=np.float64)
@@ -182,7 +183,7 @@ class image_subscriber():
         except CvBridgeError as e:
             print(e)
         self.depth_images[index] = np.array(depth_image, dtype=np.float32)
-        # print("created depth image")
+        #print("created depth image")
         
     def image_callback(self, img_data, index):
         try:
@@ -190,7 +191,7 @@ class image_subscriber():
         except CvBridgeError as e:
             print(e)
         self.color_images[index] = np.array(color_image, dtype=np.uint8)
-        # print("created color image")
+        #print("created color image")
 
     def get_images(self):
         return self.color_images, self.depth_images
@@ -199,6 +200,7 @@ class image_subscriber():
 if __name__ == "__main__": # This is not a function but an if clause !!
     # "global" parameters
     rospy.init_node("segmentation_node")
+
     # TODO: scene and force_field publisher can be combined into one
     scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1) # adds object to the planning scene
     force_field_publisher = rospy.Publisher("/force_bboxes", PlanningSceneWorld, queue_size=1) # publishes planning scene to force field generation node
@@ -209,7 +211,6 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     depth_images = []
     color_images = []
     rate = rospy.Rate(10)
-    model = FastSAM('FastSAM-x.pt')
     DEVICE = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -260,6 +261,13 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                                                        cx=659.51, cy=365.34)
 
     print("starting loop")
+    color_images = image_subscriber.get_images()[0]
+    depth_images = image_subscriber.get_images()[1]
+    segmentation_parameters = SegmentationParameters(736, conf=0.6, iou=0.9)
+    segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, cutoff=4.0, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
+    segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
+     # Set up logging
+    iteration_times = []
     while not rospy.is_shutdown():
         print("looping")
         user_input = input("Enter 's' to segment the image. See the ZED-Ros node for a preview. Press 'x' to shut down. Press 'c' to clear scene ")
@@ -268,7 +276,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
         if user_input.lower() == 's':
             # segment only upon user input
             print("setting images")
-            color_image1, color_image2 = image_subscriber.get_images()[0]
+            color_image1, color_image2 = image_subscriber.get_images()[0]   
             cv2.imshow("color_image1", color_image1)
             cv2.imwrite("images/color1.png", color_image1)
             cv2.waitKey(0)
@@ -285,81 +293,80 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             cv2.waitKey(0)
             cv2.destroyAllWindows()
             print("starting segmentation")
-            segmentation_parameters = SegmentationParameters(736, conf=0.4, iou=0.9)
-            segmenter = SegmentationMatcher(segmentation_parameters, cutoff=2.0, model_path='FastSAM-x.pt', DEVICE=DEVICE, depth_scale=1.0)
-            segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
+          
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
-            segmenter.preprocess_images(visualize=False)
+            #TODO: commented out only for testing
+            #segmenter.preprocess_images(visualize=True)
+
             # TODO: by mounting a camera on the robot we could reconstruct the entire scene by matching multiple perspectives.
             # For this, we need to track the robots camera position and apply a iou search in n-dimensional space (curse of dimensionylity!!!)
             # We could thus preserve segmentation information.
             # This process may be sped up by using tracking
-            mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=False)  # batch processing of two images saves meagre 0.3 seconds
-            segmenter.generate_pointclouds_from_masks(visualize=False)
-            global_pointclouds = segmenter.project_pointclouds_to_global(visualize=False)
-            # next step also deletes the corresponded poointclouds from general pintcloud array
-            correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0) 
-            # Here we get the "stitched" objects matched by both cameras
-            # TODO (IDEA) we could ICP the resultin pointclouds to find the bet matching geomtric primitives
-            corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, 
-                                                                                               visualize=True, use_icp=True)
-            # get all unique pointclouds
-            pointclouds = segmenter.get_final_pointclouds()
-            bounding_boxes = []
-            for element in matched_objects:
-                element, _ =  element.remove_statistical_outlier(25, 0.5)
-                bbox = element.get_minimal_oriented_bounding_box(robust=True)
-                bbox.color = (1, 0, 0)  # open3d RED
-                bounding_boxes.append(bbox) # here bbox center is not 0 0 0
+            # TEST!
+            iteration_no = 0
+            while(True):
+                start = time.time()
+                #mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=True)
+                segmenter.preprocess_images(visualize=False) 
+                mask_arrays = segmenter.segment_color_images_batch(filter_masks=False, visualize=False)  # batch processing of two images saves 0.12 seconds
+                print("Segmentation took, ", time.time()-start, " seconds")
 
-            
-            #ToDo: publish objects to planning scene
-            collision_objects, force_field_planning_scene, transforms = create_planning_scene_object_from_bbox(bounding_boxes)
-            for object in collision_objects:
-                scene_publisher.publish(object)
-                rospy.sleep(0.05)
-            print("published object to the planning scene")
-            # transform axis aligned bboxes and corrresponding ee-transforms to the force field planner
-            force_field_publisher.publish(force_field_planning_scene)
-            #For debug
-            """
-            for object in force_field_planning_scene.collision_objects:
-                scene_publisher.publish(object)
-                rospy.sleep(0.05)
-            """ # End of debug
-            transform_publisher.publish(transforms)
-            matched_objects.extend(bounding_boxes)
-            print("visualizing detected planning scene")
-            o3d.visualization.draw_geometries(matched_objects)
+                segmenter.generate_pointclouds_from_masks(visualize=False)
+                #print("Pointcloud generation at, ", time.time()-start, " seconds")
+                global_pointclouds = segmenter.project_pointclouds_to_global(visualize=False)
+                #print("Pointcloud transformation at, ", time.time()-start, " seconds")
+                # next step also deletes the corresponded poointclouds from general pintcloud array
+                correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0) 
+                #print("Corrrespondence match at, ", time.time()-start, " seconds")
+                # Here we get the "stitched" objects matched by both cameras
+                # TODO (IDEA) we could ICP the resultin pointclouds to find the bet matching geomtric primitives
+                corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, 
+                                                                                                visualize=False, use_icp=False)
+                
+                print("Alignment at, ", time.time()-start, " seconds")
+                # get all unique pointclouds
+                pointclouds = segmenter.get_final_pointclouds()
+                bounding_boxes = []
+                for element in matched_objects:
+                    element, _ =  element.remove_statistical_outlier(25, 0.5)
+                    bbox = element.get_minimal_oriented_bounding_box(robust=True)
+                    bbox.color = (1, 0, 0)  # open3d RED
+                    bounding_boxes.append(bbox) # here bbox center is not 0 0 0
+                
+                #print("Bounding boxes created at, ", time.time()-start, " seconds")
+
+                
+                #ToDo: publish objects to planning scene
+                collision_objects, force_field_planning_scene, transforms = create_planning_scene_object_from_bbox(bounding_boxes)
+                for object in collision_objects:
+                    scene_publisher.publish(object)
+                    rospy.sleep(0.001)
+                #print("published object to the planning scene")
+                
+                # transform axis aligned bboxes and corrresponding ee-transforms to the force field planner
+                force_field_publisher.publish(force_field_planning_scene)
+                #For debug
+                """
+                for object in force_field_planning_scene.collision_objects:
+                    scene_publisher.publish(object)
+                    rospy.sleep(0.05)
+                """ 
+                # End of debug
+                transform_publisher.publish(transforms)
+                matched_objects.extend(bounding_boxes)
+                #print("visualizing detected planning scene")
+                # Visualize
+                # o3d.visualization.draw_geometries(matched_objects)
+                print("Everything took, ", time.time()-start, " seconds")
+
+                
+                with open(current_dir + '/segmentation_log.txt', 'a') as file:
+                    file.write(f"Iteration {iteration_no} - Segmentation Time: {time.time()-start} seconds\n")
+                iteration_no += 1 
+
         if user_input.lower() == 'c':
             empty_scene = PlanningScene()
             empty_scene.is_diff = False
             moveit_planning_scene_publisher.publish(empty_scene)
 
         rate.sleep()
- 
- # Done: write a code which does the following steps: 
- # PYTHON
- # DONE
- # 1) take oriented bounding boxes and transforms them to be axis aligned. In praxis we just need the three coordinate 
- #    intervals (xmin, xmax; ymin, ymax; zmin, zmax) and to publish them together with the transform 
- # 2) publishes axis aligned bounding boxes to a "bbox" topic, and also publishes the corresponding 
- #    transforms to a "transform" topic or does both at the same time
- # ----------------------------------------------------------------------
-# TODO: write a code which does the following steps:
- # C++ 
- # 1) Write a node that subscribes to the topic "ee-position"
- # 2) subscribe to the "bounding box" topic and/or to the "transform" topic
- # 3) create force field publisher
- # 4) for each bounding box, compute the nearest point on the box w.r.t to the end effector
- #  4.1) extract the three coordinate intervals in x, y, and z direction which delimit the bounding box
- #  4.2 transform the ee-position to be in the same frame as the axis aligned bounding boxes
- #  4.3) For each coordinate interval (x,y,z) do: (and use p' as the projected point)
- #          if ee[x] < max(x) && ee[x] > min(x)
- #              p' = ee[x]
- #          else if ee[x] > max(x):
- #              p' = max(x)
- #          else if ee[x] < min(x):
- #              p' = min(x)
- #  4.4) Compute F_i in dependence of p' and the end-effector
- # 5) Add up all F_i and publish them to a "Force Field" topic

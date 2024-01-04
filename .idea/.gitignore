@@ -8,4 +8,6 @@
 /dataSources.local.xml
 FastSAM-x.pt
 *.pkl
+*.svo
+*.avi
 

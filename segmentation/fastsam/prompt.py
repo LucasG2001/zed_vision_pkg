@@ -103,7 +103,11 @@ class FastSAMPrompt:
              withContours=True) -> np.ndarray:
         if isinstance(annotations[0], dict):
             annotations = [annotation['segmentation'] for annotation in annotations]
-        image = self.img
+        if isinstance(self.img, list):
+            print("self.img is a list")
+            image = self.img[0]
+        else:
+            image = self.img
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         original_h = image.shape[0]
         original_w = image.shape[1]
@@ -138,7 +142,8 @@ class FastSAMPrompt:
             )
         else:
             if isinstance(annotations[0], np.ndarray):
-                annotations = torch.from_numpy(annotations)
+                annotation_array = np.stack(annotations)
+                annotations = torch.from_numpy(annotation_array)
             self.fast_show_mask_gpu(
                 annotations,
                 plt.gca(),

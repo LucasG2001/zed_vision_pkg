@@ -5,15 +5,18 @@
     <arg name="serial_number" default="32689769" />
     <arg name="visualize" default="True" />
     <arg name="camera_number" default="1" />
-
+    
+    
     <!-- Launch the node with different topics and transform names -->
+
     <node pkg="zed_vision" type="body_tracking_multicam.py" name="body_tracking_node_1" output="screen">
-         <param name="yaml_file" value="$(arg yaml_file)" />
+        <param name="yaml_file" value="$(arg yaml_file)" />
         <param name="transform_name" value="$(arg transform_name)" />
         <param name="serial_number" value="$(arg serial_number)" />
         <param name="visualize" value="$(arg visualize)" />
         <param name="camera_number" value="1" />
     </node>
+   
 
     <node pkg="zed_vision" type="body_tracking_multicam.py" name="body_tracking_node_2" output="screen">
         <param name="yaml_file" value="$(arg yaml_file)" />
@@ -22,6 +25,7 @@
         <param name="visualize" value="" />
         <param name="camera_number" value="2" />
     </node>
+   
 
     <node pkg="zed_vision" type="body_tracking_multicam.py" name="body_tracking_node_3" output="screen">
         <param name="yaml_file" value="$(arg yaml_file)" />
@@ -30,6 +34,8 @@
         <param name="visualize" value="" />
         <param name="camera_number" value="3" />
     </node>
+    
+    
 
     <!-- Launch the hand averaging node -->
     <node pkg="zed_vision" type="hand_pose_filter.py" name="hand_averaging_node" output="screen" launch-prefix="gnome-terminal --command">

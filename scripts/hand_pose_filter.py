@@ -14,28 +14,28 @@ class HandAveragerNode:
     def __init__(self):
         rospy.init_node('hand_averager_node', anonymous=True)
 
-        self.camera_list = ["32689769", "38580376", "33137761"]
+        self.camera_list = ["32689769", "38580376", "34783283"]
 
         # Publisher
-        self.left_hand_pub = rospy.Publisher('left_hand', Point, queue_size=1)
-        self.right_hand_pub = rospy.Publisher('right_hand', Point, queue_size=1)
+        self.left_hand_pub = rospy.Publisher('cartesian_impedance_controller/left_hand', Point, queue_size=1)
+        self.right_hand_pub = rospy.Publisher('cartesian_impedance_controller/right_hand', Point, queue_size=1)
 
         # Variables to store received points
         self.left_hand_points = {'cam1': Point(), 'cam2': Point(), 'cam3': Point()}
         self.right_hand_points = {'cam1': Point(), 'cam2': Point(), 'cam3': Point()}
 
         # Subscribers
-        for i in range(1, 3):
-            rospy.Subscriber(f'cartesian_impedance_controller/left_hand{self.camera_list[i-1]}', Point, self.left_point_callback, callback_args=f'cam{i}')
-            rospy.Subscriber(f'cartesian_impedance_controller/right_hand{self.camera_list[i-1]}', Point, self.right_point_callback, callback_args=f'cam{i}')
+        for i in range(1, 4):
+            rospy.Subscriber(f'/left_hand{self.camera_list[i-1]}', Point, self.left_point_callback, callback_args=f'cam{i}')
+            rospy.Subscriber(f'/right_hand{self.camera_list[i-1]}', Point, self.right_point_callback, callback_args=f'cam{i}')
 
     def left_point_callback(self, data: Point(), cam):
         self.left_hand_points[cam] = data
-        # print(f"got message {data} on left hand from camera {cam}")
+        #print(f"got message {data} on left hand from camera {cam}")
 
     def right_point_callback(self, data: Point(), cam):
         self.right_hand_points[cam] = data
-        # print(f"got message {data} on right hand from camera {cam}")
+        #print(f"got message {data} on right hand from camera {cam}")
         
 
     def calculate_and_publish_average(self, n_bodies):
@@ -49,6 +49,7 @@ class HandAveragerNode:
             print("no bodies were detected yet")
             return 
         
+        i= 0
         for (key1,left_point), (key2, right_point) in zip(self.left_hand_points.items(), self.right_hand_points.items()):
             left_avg.x += left_point.x
             left_avg.y += left_point.y
@@ -57,6 +58,10 @@ class HandAveragerNode:
             right_avg.x += right_point.x
             right_avg.y += right_point.y
             right_avg.z += right_point.z
+
+            print(f"left hand of camera {i} at {left_point}")
+            print("_______________________________")
+            i += 1
 
         right_avg.x /= num_points
         right_avg.y /= num_points
@@ -69,17 +74,19 @@ class HandAveragerNode:
         # Publish the average point for the specified hand
         self.left_hand_pub.publish(left_avg)
         self.right_hand_pub.publish(right_avg)
-
+        
         print(f"right hand is at {right_avg}")
         print(" ")
         print(f"left hand is at {left_avg}")
+        print(" ")
+        print(f"no points is {num_points}")
         print("___________________________________")
 
 
 if __name__ == '__main__':
     try:
         hand_node = HandAveragerNode()
-        rate = rospy.Rate(5)
+        rate = rospy.Rate(15)
         print("established hand pose node")
         #initialize data for logging
         #right_hand_timeseries = np.empty((0,3))
@@ -91,7 +98,8 @@ if __name__ == '__main__':
             detected_bodies = rospy.get_param('detected_body_list')
             nr_bodies = np.sum(np.array(detected_bodies))
             hand_node.calculate_and_publish_average(nr_bodies)
-            
+            #hand_node.right_hand_points.clear()
+            #hand_node.left_hand_points.clear()
             # print(hand_node.right_hand_points)
             #right_hand_timeseries = np.vstack((right_hand_timeseries, right_hand))        
             #left_hand_timeseries = np.vstack((left_hand_timeseries, left_hand))

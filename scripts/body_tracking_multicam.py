@@ -55,7 +55,7 @@ def load_transform_from_yaml(yaml_file, transform_name):
     selected_transform = transforms.get(transform_name)
 
     if selected_transform:
-        return np.array(selected_transform)
+        return np.array(selected_transform) 
     else:
         print(f"Error: Transform {transform_name} not found in the YAML file.")
         return None
@@ -64,9 +64,10 @@ def get_hand_keypoints(body):
     # initialize values
     left_hand_matrix = np.array(body.keypoint[16]).reshape([1, 3])
     right_hand_matrix = np.array(body.keypoint[17]).reshape([1, 3])
-    for i in range(30, 50):
+
+    for i in range(30, 37, 2):
         keypoint_left = np.array(body.keypoint[i]).reshape([1, 3])
-        keypoint_right = np.array(body.keypoint[i + 20]).reshape([1, 3])  # loops from 50 to 70 (69 is last)
+        keypoint_right = np.array(body.keypoint[i + 1]).reshape([1, 3])  # loops from 50 to 70 (69 is last)
         np.vstack((left_hand_matrix, keypoint_left))  # left hand
         np.vstack((right_hand_matrix, keypoint_right))  # left hand
 
@@ -75,6 +76,8 @@ def get_hand_keypoints(body):
 
     # print("shape of hand positions is ", np.shape(left_hand_pos))
     return right_hand_pos, left_hand_pos
+
+
 
 def camera_start_callback(msg):
     global start_cam
@@ -108,8 +111,8 @@ if __name__ == "__main__":
     Transform = T_0S @ T_SC
    
     # initialze publisher for hand keypoint
-    left_hand_publisher = rospy.Publisher(f'cartesian_impedance_controller/left_hand{serial_number}', Point, queue_size=1)
-    right_hand_publisher = rospy.Publisher(f'cartesian_impedance_controller/right_hand{serial_number}', Point, queue_size=1)
+    left_hand_publisher = rospy.Publisher(f'/left_hand{serial_number}', Point, queue_size=1)
+    right_hand_publisher = rospy.Publisher(f'/right_hand{serial_number}', Point, queue_size=1)
     
 
 
@@ -163,13 +166,14 @@ if __name__ == "__main__":
     body_param.enable_tracking = True  # Track people across images flow
     body_param.enable_body_fitting = True  # Smooth skeleton move
     body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_ACCURATE
-    body_param.body_format = sl.BODY_FORMAT.BODY_70  # Choose the BODY_FORMAT you wish to use
+    body_param.body_format = sl.BODY_FORMAT.BODY_38  # Choose the BODY_FORMAT you wish to use
 
     # Enable Object Detection module
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
-    body_runtime_param.detection_confidence_threshold = 0.99 #confidence threshold actually doesnt work
+    body_runtime_param.detection_confidence_threshold = 0.4 #confidence threshold actually doesnt work
+    #TODO @ Accenture: Does your confidence threshold actually work?
    
 
     # Get ZED camera information
@@ -183,14 +187,17 @@ if __name__ == "__main__":
 
 
     # Create ZED objects filled in the main loop
+    # TODO: Maybe we need to create multiple sl.body()
     bodies = sl.Bodies()
     image = sl.Mat()
+
 
     left_hand_msg = Point()
     right_hand_msg = Point()
     # init 
     right_wrist = np.array([0, 0, 0])
     left_wrist = np.array([0, 0, 0])
+    detected_body_list = []
     # take first image
     print(f"detection loop is running on camera {camera_number}")
     while zed.grab() == sl.ERROR_CODE.SUCCESS:
@@ -199,32 +206,45 @@ if __name__ == "__main__":
         # Retrieve left image
         zed.retrieve_image(image, sl.VIEW.LEFT, sl.MEM.CPU, display_resolution)
         zed.retrieve_bodies(bodies, body_runtime_param)
-        
+        # Update OCV view
+        image_left_ocv = image.get_data()
+
+        detected_body_list.clear()
         for i, candidate in enumerate(bodies.body_list):
-            if candidate.confidence < 70:
-                del bodies.body_list[i]
+            if candidate.confidence > 60:
+                detected_body_list.append(candidate)
+            
         confidences = []     
-        for i,detected_body in enumerate(bodies.body_list):
-                  confidences.append(detected_body.confidence)
-        if len(confidences) > 0:
+        for i,detected_body in enumerate(detected_body_list):
+                confidences.append(detected_body.confidence)
+
+        if len(confidences) > 0: # ==> len(detected_body_list) > 0
             max_value = max(confidences)
             max_confidence_index = confidences.index(max_value)
-            element = bodies.body_list[max_confidence_index]
-            body_list = [element]
+            element = detected_body_list[max_confidence_index]
+            detected_body_list = [element]
             detected_bodies[camera_number -1] = True # set a 1 if this camera has detected a body
             rospy.set_param('detected_body_list', detected_bodies)
         else:
-            body_list = []
             detected_bodies[camera_number -1] = False # set a 0 if this camera has detected a body
             rospy.set_param('detected_body_list', detected_bodies)
-            continue
-    
+            left_hand_msg.x = 0.0 #static offset coming out of nowhere
+            left_hand_msg.y = 0.0
+            left_hand_msg.z = 0.0
+            right_hand_msg.x = 0.0 #static offset coming out of nowhere
+            right_hand_msg.y = 0.0
+            right_hand_msg.z = 0.0
+            # publish positions of the two hands
+            left_hand_publisher.publish(left_hand_msg)
+            right_hand_publisher.publish(right_hand_msg)
+            continue # do not publish rest of messages an do not viusalize -> "stutter" stems from this
+        
         # print("----------------------")
         # update only if not nan, else use last value
-        if (not math.isnan(element.keypoint[16][0])):
-            _, left_wrist = get_hand_keypoints(element)
-        if (not math.isnan(element.keypoint[17][0])):
-            right_wrist, _ = get_hand_keypoints(element)
+        if (not math.isnan(detected_body_list[0].keypoint[16][0])):
+            _, left_wrist = get_hand_keypoints(detected_body_list[0])
+        if (not math.isnan(detected_body_list[0].keypoint[17][0])):
+            right_wrist, _ = get_hand_keypoints(detected_body_list[0])
         # transform hand position to base frame
         right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
         left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
@@ -239,18 +259,19 @@ if __name__ == "__main__":
         # publish positions of the two hands
         left_hand_publisher.publish(left_hand_msg)
         right_hand_publisher.publish(right_hand_msg)
-        image_left_ocv = image.get_data()
+
         if(visualize):
-            cv_viewer.render_2D(image_left_ocv, image_scale, body_list, body_param.enable_tracking,
+            cv_viewer.render_2D(image_left_ocv, image_scale, detected_body_list, body_param.enable_tracking,
                                 body_param.body_format)
             cv2.imshow("ZED | 2D View", image_left_ocv)
-
+            #print("confidence is ", detected_body_list[0].confidence)
+            # print("lenght of detecetd bodies is ", len(detected_body_list))
         key = cv2.waitKey(10) & 0xFF
         if key == ord('q'):
             break
         
-        rospy.sleep(0.01)
-    #viewerexit()
     image.free(sl.MEM.CPU)
-    cv2.destroyAllWindows()
+    zed.disable_body_tracking()
+    zed.disable_positional_tracking()
     zed.close()
+    cv2.destroyAllWindows()

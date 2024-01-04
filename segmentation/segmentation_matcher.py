@@ -21,14 +21,20 @@ class SegmentationMatcher:
     Note that this Matcher works with tuples or lists of images, camera parameters and so on
     """
 
-    def __init__(self, segmentation_parameters, cutoff, model_path='FastSAM-x.pt', DEVICE="cpu", depth_scale=1.0):
-        self.color_images = []
-        self.depth_images = []
+    def __init__(self, segmentation_parameters, color_images, depth_images, cutoff=2.0, model_path='FastSAM-x.pt', DEVICE="gpu", depth_scale=1.0):
+        #TODO: Initialize Images with something
+        self.color_images = color_images
+        self.depth_images = depth_images
         self.intrinsics = []
         self.transforms = []
         self.mask_arrays = []
         self.seg_params = segmentation_parameters
         self.nn_model = FastSAM(model_path)
+        #TODO: check what retina_masks = false does
+        self.results = self.nn_model(self.color_images[0], device=DEVICE, retina_masks=True,
+                                               imgsz=self.seg_params.image_size, conf=self.seg_params.confidence,
+                                               iou=self.seg_params.iou)
+        self.prompt_process = FastSAMPrompt(self.color_images[0], self.results, device=DEVICE)
         self.max_depth = cutoff  # truncation depth
         self.pc_array_1 = []
         self.pc_array_2 = []
@@ -85,61 +91,70 @@ class SegmentationMatcher:
     def set_segmentation_params(self, segmentation_params):
         self.seg_params = segmentation_params
 
+    #TODO: measure time to completion now
     #TODO: prompt_process/results need to be saved globally or similar, else they are created new all the time
     def segment_color_images(self, filter_masks=True, visualize=False):
-        # ToDo: test if one can scam runtime of the model by combining the them at the same time
-        # ToDo: Yes we can do exactly that
+        start_time = time.time()
+        print("segmenting images")
+
         DEVICE = self.device
-        print("loaded NN model")
         color_images = self.color_images
         for i, image in enumerate(color_images):
-            everything_results = self.nn_model(image, device=DEVICE, retina_masks=True,
+            self.results = self.nn_model(image, device=DEVICE, retina_masks=True,
                                                imgsz=self.seg_params.image_size, conf=self.seg_params.confidence,
                                                iou=self.seg_params.iou)
-            prompt_process = FastSAMPrompt(image, everything_results, device=DEVICE)
-            annotations = prompt_process._format_results(result=everything_results[0], filter=0)
+            #--------
+            self.prompt_process = FastSAMPrompt(image, self.results, device=DEVICE)
+            annotations = self.prompt_process._format_results(result=self.results[0], filter=0)
+            intermediate_time = time.time() - start_time
             if filter_masks:
-                annotations, _ = prompt_process.filter_masks(annotations)
+                annotations, _ = self.prompt_process.filter_masks(annotations)
             mask_array = [ann["segmentation"] for ann in annotations]  # is of type np_array
             if visualize:
-                prompt_process.plot(annotations=prompt_process.everything_prompt(), output_path=f'segmentation{i}.jpg')
+                self.prompt_process.plot(annotations=self.prompt_process.everything_prompt(), output_path=f'segmentation{i}.jpg')
 
             self.mask_arrays.append(mask_array)
 
+        print("size of mask array is ", len(self.mask_arrays))
         return self.mask_arrays
+    
 
-    #TODO: prompt_process/results need to be saved globally or similar, else they are created new all the time
+    # ToDo: test if one can scam runtime of the model by combining the them at the same time
+    # ToDo: Yes we can do exactly that
     def segment_color_images_batch(self, filter_masks=True, visualize=False):
-        DEVICE = self.device
-        print("loaded NN model")
-        color_images = self.color_images
-        start_time = time.time()
-        everything_results = self.nn_model(self.color_images, device=DEVICE, retina_masks=True,
+        
+        print("segmenting images")
+        self.results = self.nn_model(self.color_images, device=self.device, retina_masks=True,
                                            imgsz=self.seg_params.image_size, conf=self.seg_params.confidence,
                                            iou=self.seg_params.iou)
-        # takes 95% of runtime up to here
-        print("NN took ", time.time() - start_time, " s")
-        prompt_process = FastSAMPrompt(self.color_images, everything_results, device=DEVICE)
-        annotations1 = prompt_process._format_results(result=everything_results[0], filter=0)
-        annotations2 = prompt_process._format_results(result=everything_results[1], filter=0)
-        # takes 99% of runtime up to here (without filtering)
+        self.prompt_process = FastSAMPrompt(self.color_images, self.results, device=self.device)
+        #--------
+        #TODO: Check what exactly NN is putting out here
+        annotations1 = self.prompt_process._format_results(result=self.results[0], filter=0)
+        annotations2 = self.prompt_process._format_results(result=self.results[1], filter=0)
+        #--------
         if filter_masks:
-            annotations1, _ = prompt_process.filter_masks(annotations1)
-            annotations2, _ = prompt_process.filter_masks(annotations2)
+            annotations1, _ = self.prompt_process.filter_masks(annotations1) # filtering takes up to 5 sec if two times 60 items are detected
+            annotations2, _ = self.prompt_process.filter_masks(annotations2)
+        print("length of annoation 1 is ", len(annotations1))
+        print("length of annoation 2 is ", len(annotations2))
         mask_array1 = [ann["segmentation"] for ann in annotations1]  # is of type np_array
         mask_array2 = [ann["segmentation"] for ann in annotations2]  # is of type np_array
-        if visualize:
-                prompt_process.plot(annotations=annotations1, output_path=f'segmentation1.jpg')
-                prompt_process.plot(annotations=annotations2, output_path=f'segmentation2.jpg')
+        if visualize: # visualization takes ~2s for 2x60 detected instances
+                self.prompt_process.plot(annotations=annotations1, output_path=f'segmentation1.jpg')
+                self.prompt_process.plot(annotations=annotations2, output_path=f'segmentation2.jpg')
 
         self.mask_arrays = [mask_array1, mask_array2]
 
+        print("size of mask array is ", len(self.mask_arrays))
         return self.mask_arrays
 
     def generate_pointclouds_from_masks(self, visualize=False):
         postprocessing = 0
         pc_creating = 0
         rgbd_creating = 0
+        self.pc_array_1.clear()
+        self.pc_array_2.clear()
         point_cloud_arrays = [self.pc_array_1, self.pc_array_2]
         # ToDo: Find a way to generate way less pointclouds
         #  maybe by blacking the image where depth is no more interesting
@@ -179,12 +194,71 @@ class SegmentationMatcher:
                 postprocessing += pc_postprocess_time
 
                 # o3d.visualization.draw_geometries([pc], width=1280, height=720)
-                if len(pc.points) > 100:  # delete all pointclouds with less than 40 points
+                if len(pc.points) > 100:  # delete all pointclouds with less than 100 points
                     point_cloud_arrays[i].append(pc)
 
+        print("size of pc array is ", len(self.pc_array_1))
         print("time for creating rgbd image is ", rgbd_creating)
         print("creating pointcloud took ", pc_creating)
         print("cleaning pointcloud took ", postprocessing)
+
+    def parallel_generate_pointclouds_from_masks(self, visualize=False):
+        postprocessing = 0
+        pc_creating = 0
+        rgbd_creating = 0
+        self.pc_array_1.clear()
+        self.pc_array_2.clear()
+        point_cloud_arrays = [self.pc_array_1, self.pc_array_2]
+
+        # Convert the depth image and masks to NumPy arrays
+        depth_matrix1 = np.array(self.depth_images[0])
+        depth_matrix2 = np.array(self.depth_images[1])
+        mask_matrix1 = np.array(self.mask_arrays[0])
+        mask_matrix2 = np.array(self.mask_arrays[1])
+
+        # Check if the dimensions match
+        if self.depth_images[0].shape != mask_matrix1.shape[1:]:
+            raise ValueError("Depth image dimensions must match mask dimensions.")
+
+        # Multiply the depth image with each mask element-wise
+        local_depth_matrix1 = depth_matrix1 * mask_matrix1
+        local_depth_matrix2 = depth_matrix2 * mask_matrix2
+        # create o3d color images
+        local_color1 = o3d.geometry.Image(self.color_images[0].astype(np.uint8))
+        local_color2 = o3d.geometry.Image(self.color_images[1].astype(np.uint8))
+
+        
+
+        # ToDo: Find a way to generate way less pointclouds
+        #  maybe by blacking the image where depth is no more interesting
+        for i, (mask_array, depth_image, color_image, intrinsic) in enumerate(
+                zip(self.mask_arrays, self.depth_images, self.color_images,
+                    self.intrinsics)):
+            for mask in mask_array:
+                start_time = time.time()
+                local_depth = o3d.geometry.Image(depth_image * mask)
+                local_color = o3d.geometry.Image(color_image.astype(np.uint8)) # this is unnecessary (only need 2)
+                # Done: Check if creating pointcloud from depth image only is faster and feasible
+                # It speeds up the function call by ca. 1s but makes it impossible to use colored ICP
+                rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(local_color, local_depth,
+                                                                              depth_scale=self.depth_scale,
+                                                                              depth_trunc=self.max_depth,
+                                                                              convert_rgb_to_intensity=False)
+                if visualize:
+                    o3d.visualization.draw_geometries([rgbd_img])
+
+                pc = o3d.geometry.PointCloud.create_from_rgbd_image(image=rgbd_img, intrinsic=intrinsic)
+                pc = pc.uniform_down_sample(every_k_points=3)
+                pc, _ = pc.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
+
+                # o3d.visualization.draw_geometries([pc], width=1280, height=720)
+                if len(pc.points) > 100:  # delete all pointclouds with less than 100 points
+                    point_cloud_arrays[i].append(pc)
+
+        print("size of pc array is ", len(self.pc_array_1))
+        #print("time for creating rgbd image is ", rgbd_creating)
+        #print("creating pointcloud took ", pc_creating)
+        #print("cleaning pointcloud took ", postprocessing)
 
     def project_pointclouds_to_global(self, visualize=True):
         for pc_array, transform in zip([self.pc_array_1, self.pc_array_2], self.transforms):
