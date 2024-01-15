@@ -4,202 +4,43 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 import numpy as np
-import cv2
 from segmentation_matcher import SegmentationMatcher, SegmentationParameters
-from segmentation_matching_helpers import FastSAM
 import open3d as o3d
 import torch
 import rospy
-from sensor_msgs.msg import Image, CameraInfo
 import pyzed.sl as sl
-from cv_bridge import CvBridge, CvBridgeError
 from moveit_msgs.msg import CollisionObject
 from moveit_msgs.msg import PlanningSceneWorld, PlanningScene
-from shape_msgs.msg import SolidPrimitive
-from geometry_msgs.msg import Pose
-from scipy.spatial.transform import Rotation
 from tf2_msgs.msg import TFMessage
-from geometry_msgs.msg import TransformStamped
 import time
 
-def homogenous_transform(R, t):
-    homogeneous_matrix = np.eye(4, dtype=np.float64)
-    homogeneous_matrix[0:3, 0:3] = R
-    homogeneous_matrix[0:3, 3:4] = t
+from segmentation_utils.helper_functions import * 
+from segmentation_utils.intrinsics_subscriber import intrinsic_subscriber
+from segmentation_utils.image_subscriber import image_subscriber
 
-    return homogeneous_matrix
+# Get the current script's directory
+script_directory = os.path.dirname(os.path.realpath(__file__))
+# Construct the path to the transform.yaml file
+yaml_path = os.path.join(script_directory, '..', 'scripts', 'transforms.yaml')
 
-def inverse_transform(R, t):
-    H_inv = np.eye(4, dtype=np.float64)
-    H_inv[0:3, 0:3] = np.transpose(R)
-    H_inv[0:3, 3] = -np.transpose(R) @ t
-
-    return H_inv
-
-def get_bboxes_for_force_field(bbox, primitive, R, t, index):
-    aligned_collision_object = CollisionObject()
-    aligned_collision_object.header.frame_id = "panda_link0"
-    transform = TransformStamped()
-    # transform oriented bounding box to axis aligned bounding box with center at (0,0,0)
-    aligned_bounding_box = o3d.geometry.OrientedBoundingBox(bbox)
-    inv_R = np.transpose(R)
-    aligned_bounding_box.rotate(R=inv_R)
-    aligned_bounding_box.translate(-inv_R @ t, relative=True) # now the bbox should be axis aligned and centered at origin
-    orientation = np.array(aligned_bounding_box.R)
-    # In this quaternion we save the necessary transform to align the bounding box
-    transform_quat = Rotation.from_matrix(inv_R).as_quat()
-    # fill transform
-    position = aligned_bounding_box.center
-    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = -inv_R @ t # we want the bbox at 0 0 0 but need the corresponding transform
-    transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = transform_quat
-    # fill pose
-    pose = Pose()
-    pose.position.x, pose.position.y, pose.position.z = position 
-    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = Rotation.from_matrix(orientation).as_quat() 
-    # fill collision object
-    aligned_collision_object.id = "aligned nr. " + str(index)
-    aligned_collision_object.primitives.append(primitive)
-    aligned_collision_object.primitive_poses.append(pose)
-    aligned_collision_object.operation = CollisionObject.ADD
-    
-    return aligned_collision_object, transform
-
-def add_mounting_table():
-    """
-    This function returns a collision object corresponding to the table the robot is mounted on
-    we can return the mounting table both for the force field node and the planning scene, without transformation, since
-    for the force generation we need only the dimensions anyway (and can assume the box to be at 0 0 0, just transforming the EE)
-    """
-    table = CollisionObject()
-    table.header.frame_id = "panda_link0"
-    transform = TransformStamped()
-    pose = Pose()
-    pose.position.x, pose.position.y, pose.position.z = [0.45, 0.3, -0.02]  # pose of table center 
-    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = [0, 0, 0, 1]
-    # fill collision object
-    table.id = "mounting_table"
-    # create corresponding primitive 
-    primitive = SolidPrimitive()
-    primitive.type = SolidPrimitive.BOX
-    primitive.dimensions = [0.9, 1.5, 0.04]
-    table.primitives.append(primitive)
-    table.primitive_poses.append(pose)
-    table.operation = CollisionObject.ADD
-    # create corresponding transform 
-    transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = [-0.45, -0.3, 0.02]
-    transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = [0, 0, 0, 1]
-    
-    return table, transform
-
-def create_planning_scene_object_from_bbox(bboxes, id = "1"):
-    transforms_msg = TFMessage()
-    force_field_planning_scene = PlanningSceneWorld()
-    collision_objects = []
-    for i, bbox in enumerate(bboxes):
-        oriented_collision_object = CollisionObject()
-        oriented_collision_object.header.frame_id = "panda_link0"
-        R = np.array(bbox.R) # Rotation Matrix of bounding box
-        center = bbox.center
-        sizes = bbox.extent
-        quat_R = (Rotation.from_matrix(R)).as_quat()
-        # create corresponding primitive 
-        primitive = SolidPrimitive()
-        primitive.type = SolidPrimitive.BOX
-        primitive.dimensions = sizes
-        # we need to publish a pose and a size, to spawn a rectangle of size S at pose P in the moveit planning scene
-        pose = Pose()
-        pose.position.x, pose.position.y, pose.position.z = center # should generally not be 0 0 0 here
-        pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = quat_R
-        # TODO: get id's to be consistent throughout segmentations and the planning scene
-        oriented_collision_object.id = str(i)
-        oriented_collision_object.primitives.append(primitive)
-        oriented_collision_object.primitive_poses.append(pose)
-        oriented_collision_object.operation = CollisionObject.ADD
-        collision_objects.append(oriented_collision_object)
-
-        # fill axis aligned bounding boxes for Force field genreation
-        aligned_bbox, ee_transform = get_bboxes_for_force_field(bbox, primitive, R, center, i)
-        force_field_planning_scene.collision_objects.append(aligned_bbox)
-        transforms_msg.transforms.append(ee_transform)
-    
-    # get the mounting table in any case
-    table_object, table_transform = add_mounting_table()
-    collision_objects.append(table_object)
-    force_field_planning_scene.collision_objects.append(table_object)
-    transforms_msg.transforms.append(table_transform)
-
-        
-    return collision_objects, force_field_planning_scene, transforms_msg
-
-
-
-class intrinsic_subscriber():
-    def __init__(self):
-        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/left/camera_info", CameraInfo, self.intrisics_callback, 0)
-        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_rear/left/camera_info", CameraInfo, self.intrisics_callback, 1)
-        o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                        fx=533.77, fy=535.53,
-                                                       cx=661.87, cy=351.29)
-
-        o3d_intrinsic2 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                            fx=523.68, fy=523.68,
-                                                            cx=659.51, cy=365.34)
-        
-        self.o3d_intrinsics = [o3d_intrinsic1, o3d_intrinsic2]
-
-    
-    def intrinsics_calback(self, data, index):
-        intrinsics_array = data.K
-        fx = intrinsics_array[0]
-        cx = intrinsics_array[2]
-        fy = intrinsics_array[4]
-        cy = intrinsics_array[5]
-        height = data.height
-        width = data.width
-        self.o3d_intrinsics[index].set_intrisic(width, height, fx, fy, cx, cy)
-        
-    def get_intrinsics(self):
-        return self.o3d_intrinsics
-
-class image_subscriber():
-
-    def __init__(self):
-
-        self.bridge = CvBridge()        
-        # TODO: Add second depth subscriber after finally using both ZED cams
-        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/depth/depth_registered/", Image, self.depth_callback, 0)
-        rospy.Subscriber("/zed_multi/zed2i_long/zed_nodelet_front/left/image_rect_color/", Image, self.image_callback, 0)
-
-        # ATTENTION: depending on the zed2i.yaml file for the zed configuration parameters the images will be downsampled to lower resolutions
-        rospy.Subscriber("/zed_multi/zed2i_short/zed_nodelet_rear/depth/depth_registered/", Image, self.depth_callback, 1)
-        rospy.Subscriber("/zed_multi/zed2i_short/zed_nodelet_rear/left/image_rect_color/", Image, self.image_callback, 1)
-        self.color_images = [0, 0]
-        self.depth_images = [0, 0]
-     
-    
-    def depth_callback(self, depth_data, index):
-        try:
-            depth_image = self.bridge.imgmsg_to_cv2(depth_data, "32FC1")
-        except CvBridgeError as e:
-            print(e)
-        self.depth_images[index] = np.array(depth_image, dtype=np.float32)
-        #print("created depth image")
-        
-    def image_callback(self, img_data, index):
-        try:
-            color_image = self.bridge.imgmsg_to_cv2(img_data, "bgr8")  # use rgb8 for open3d color palette
-        except CvBridgeError as e:
-            print(e)
-        self.color_images[index] = np.array(color_image, dtype=np.uint8)
-        #print("created color image")
-
-    def get_images(self):
-        return self.color_images, self.depth_images
-
-# TODO: add argc, argv to choose levels of visualization (none, debug, user, visualize all)
 if __name__ == "__main__": # This is not a function but an if clause !!
+
     # "global" parameters
     rospy.init_node("segmentation_node")
+    transforms_file = yaml_path
+
+    # TODO: Read in intrinsics from zed node
+    # published as sensor_msgs/CameraInfo
+    # on topic /zed_multi/zed2i_long/zed_nodelet_front/left/camera_info or rear/left/camera_info respectively
+    print("reading intrinsics")
+    o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
+                                                       fx=533.77, fy=533.53,
+                                                       cx=661.87, cy=351.29)
+
+    o3d_intrinsic2 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
+                                                       fx=534.28, fy=534.28,
+                                                       cx=666.59, cy=354.94)
+    
 
     # TODO: scene and force_field publisher can be combined into one
     scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1) # adds object to the planning scene
@@ -220,51 +61,27 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     )
     print("using device ", DEVICE)
 
+    #TODO add configuration of cameras in use for segmentation
+       
+    T_SC1 = load_transform_from_yaml(transforms_file, "H1")
+    T_SC2 = load_transform_from_yaml(transforms_file, "H2")
+    T_0S = load_transform_from_yaml(transforms_file, "T_0S")
 
-    # TODO: read extrinsics from file or ROS parameter server
-    # TODO: make reaidng extrinsics consistent with the camera in use
-    T_0S = np.array([[-1, 0, 0, 0.41],  # Transformations from Robot base (0) to Checkerboard Frame (S)
-                     [0, 1, 0, 0.0],
-                     [0, 0, -1, 0.006],
-                     [0, 0, 0, 1]])
-    
-    # camera higher up is camera 0
-    # 0 is long/front and SN 32689769
-    # 1 is short/rear
-    rotations = {"camera0": np.array([[-0.74319018, -0.56269495,  0.36199826],
-                                      [ 0.66867618, -0.64344379,  0.37262884],
-                                      [ 0.02324917,  0.51899371,  0.85446182]]),
+    if T_SC1 is not None:
+        print(f"Loaded H1 from YAML file:")
+        print(T_SC1)
+        print(f"Loaded H2 from YAML file:")
+        print(T_SC2)
 
-                 "camera1": np.array([[ 0.12160326,  0.87553127, -0.46760843],
-                                      [-0.98941778,  0.06935403, -0.12744595],
-                                      [-0.07915238,  0.47815794,  0.87469988]])}
-    
-                   
+    H1 = T_0S @ T_SC1  # T_0S @ T_S_c1
+    H2 = T_0S @ T_SC2  # T_0S @ T_S_c2
 
-    translations = {"camera0": np.array([[-0.34671173], [-0.45521386], [-0.89451421]]),
-                    "camera1": np.array([[0.54132945], [0.61558458], [-1.21148224]])}
-
-    H1 = T_0S @ homogenous_transform(rotations["camera0"], translations["camera0"])  # T_0S @ T_S_c1
-    H2 = T_0S @ homogenous_transform(rotations["camera1"], translations["camera1"])  # T_0S @ T_S_c2
-
-   
-    # ToDo: Read in intrinsics from zed node
-    # published as sensor_msgs/CameraInfo
-    # on topic /zed_multi/zed2i_long/zed_nodelet_front/left/camera_info or rear/left/camera_info respectively
-    print("reading intrinsics")
-    o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                       fx=533.77, fy=535.53,
-                                                       cx=661.87, cy=351.29)
-
-    o3d_intrinsic2 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                       fx=523.68, fy=523.68,
-                                                       cx=659.51, cy=365.34)
 
     print("starting loop")
     color_images = image_subscriber.get_images()[0]
     depth_images = image_subscriber.get_images()[1]
-    segmentation_parameters = SegmentationParameters(736, conf=0.6, iou=0.9)
-    segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, cutoff=4.0, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
+    segmentation_parameters = SegmentationParameters(1024, conf=0.4, iou=0.9)
+    segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, min_dist=0.0, cutoff=7.8, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
     segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
      # Set up logging
     iteration_times = []
@@ -277,54 +94,30 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             # segment only upon user input
             print("setting images")
             color_image1, color_image2 = image_subscriber.get_images()[0]   
-            cv2.imshow("color_image1", color_image1)
-            cv2.imwrite("images/color1.png", color_image1)
-            cv2.waitKey(0)
-            cv2.imshow("color_image2", color_image2)
-            cv2.imwrite("images/color2.png", color_image2)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
             depth_image1, depth_image2 = image_subscriber.get_images()[1]
-            cv2.imshow("depth1", depth_image1)
-            cv2.imwrite("images/depth1.png", depth_image1)
-            cv2.waitKey(0)
-            cv2.imshow("depth2", depth_image2)
-            cv2.imwrite("images/depth2.png", depth_image2)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-            print("starting segmentation")
-          
+            show_input_images(color_image1, color_image2, depth_image1, depth_image2, save=True, dir=script_directory)
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
-            #TODO: commented out only for testing
-            #segmenter.preprocess_images(visualize=True)
-
-            # TODO: by mounting a camera on the robot we could reconstruct the entire scene by matching multiple perspectives.
-            # For this, we need to track the robots camera position and apply a iou search in n-dimensional space (curse of dimensionylity!!!)
-            # We could thus preserve segmentation information.
-            # This process may be sped up by using tracking
+            #segmenter.generate_global_pointclouds(visualize=False)
+            #segmenter.get_icp_transform(visualize=False)
+            segmenter.get_image_mask()
+            segmenter.preprocess_images(visualize=True) 
             # TEST!
             iteration_no = 0
             while(True):
                 start = time.time()
                 #mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=True)
                 segmenter.preprocess_images(visualize=False) 
-                mask_arrays = segmenter.segment_color_images_batch(filter_masks=False, visualize=False)  # batch processing of two images saves 0.12 seconds
-                print("Segmentation took, ", time.time()-start, " seconds")
-
-                segmenter.generate_pointclouds_from_masks(visualize=False)
-                #print("Pointcloud generation at, ", time.time()-start, " seconds")
-                global_pointclouds = segmenter.project_pointclouds_to_global(visualize=False)
-                #print("Pointcloud transformation at, ", time.time()-start, " seconds")
-                # next step also deletes the corresponded poointclouds from general pintcloud array
-                correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.05, threshold=0.0) 
-                #print("Corrrespondence match at, ", time.time()-start, " seconds")
-                # Here we get the "stitched" objects matched by both cameras
-                # TODO (IDEA) we could ICP the resultin pointclouds to find the bet matching geomtric primitives
-                corresponding_pointclouds, matched_objects = segmenter.align_corresponding_objects(correspondences, scores, 
-                                                                                                visualize=False, use_icp=False)
-                
+                segmenter.full_gpu_segment_and_mask(visualize=False)       
+                # segmenter.segment_and_mask_images_gpu(visualize=False)
+                print("Pointcloud generation at, ", time.time()-start, " seconds")
+                # segmenter.transform_pointclouds_icp(visualize=False)
                 print("Alignment at, ", time.time()-start, " seconds")
+                correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.04, threshold=0.05) 
+                print("Corrrespondence match at, ", time.time()-start, " seconds")
+                # Here we get the "stitched" objects matched by both cameras
+                corresponding_pointclouds, matched_objects = segmenter.stitch_scene(correspondences, scores, visualize=False)
                 # get all unique pointclouds
+                print("final pointclouds at, ", time.time()-start, " seconds")
                 pointclouds = segmenter.get_final_pointclouds()
                 bounding_boxes = []
                 for element in matched_objects:
@@ -333,10 +126,9 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                     bbox.color = (1, 0, 0)  # open3d RED
                     bounding_boxes.append(bbox) # here bbox center is not 0 0 0
                 
-                #print("Bounding boxes created at, ", time.time()-start, " seconds")
+                print("Bounding boxes created at, ", time.time()-start, " seconds")
 
-                
-                #ToDo: publish objects to planning scene
+                #ToDo: publish objects to planning scene10
                 collision_objects, force_field_planning_scene, transforms = create_planning_scene_object_from_bbox(bounding_boxes)
                 for object in collision_objects:
                     scene_publisher.publish(object)
@@ -354,15 +146,16 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 # End of debug
                 transform_publisher.publish(transforms)
                 matched_objects.extend(bounding_boxes)
+                print(f"recognized and matched {len(bounding_boxes)} objects")
                 #print("visualizing detected planning scene")
                 # Visualize
-                # o3d.visualization.draw_geometries(matched_objects)
+                #o3d.visualization.draw_geometries(matched_objects)
                 print("Everything took, ", time.time()-start, " seconds")
 
                 
-                with open(current_dir + '/segmentation_log.txt', 'a') as file:
-                    file.write(f"Iteration {iteration_no} - Segmentation Time: {time.time()-start} seconds\n")
-                iteration_no += 1 
+                # with open(current_dir + '/segmentation_log.txt', 'a') as file:
+                #     file.write(f"Iteration {iteration_no} - Segmentation Time: {time.time()-start} seconds\n")
+                # iteration_no += 1 
 
         if user_input.lower() == 'c':
             empty_scene = PlanningScene()

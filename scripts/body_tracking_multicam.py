@@ -34,14 +34,14 @@ from geometry_msgs.msg import Point
 import cv2
 import sys
 import pyzed.sl as sl 
-import ogl_viewer.viewer as gl
 import cv_viewer.tracking_viewer as cv_viewer
 import numpy as np
 import rospy
 import math
 import yaml
-import argparse
 from std_msgs.msg import Bool
+from cv_bridge import CvBridge, CvBridgeError
+from sensor_msgs.msg import Image
 
 
 start_cam = False
@@ -113,8 +113,12 @@ if __name__ == "__main__":
     # initialze publisher for hand keypoint
     left_hand_publisher = rospy.Publisher(f'/left_hand{serial_number}', Point, queue_size=1)
     right_hand_publisher = rospy.Publisher(f'/right_hand{serial_number}', Point, queue_size=1)
-    
-
+    # set up publishing of images for segmentation
+    # Create a publisher for the Image message
+    color_image_pub = rospy.Publisher(f'/color_image{serial_number}', Image, queue_size=1)
+    depth_image_pub = rospy.Publisher(f'/depth_image{serial_number}', Image, queue_size=1)
+    #Opencv Bridge
+    bridge = CvBridge()
 
     #startup flag
     if int(camera_number) == 1:
@@ -129,7 +133,6 @@ if __name__ == "__main__":
         rospy.sleep(0.1)
 
 
-   
     print(f"Running Body Tracking sample on camera {camera_number} ... Press 'q' to quit")
 
     # Create a Camera object
@@ -190,6 +193,7 @@ if __name__ == "__main__":
     # TODO: Maybe we need to create multiple sl.body()
     bodies = sl.Bodies()
     image = sl.Mat()
+    depth_map = sl.Mat()
 
 
     left_hand_msg = Point()
@@ -198,25 +202,33 @@ if __name__ == "__main__":
     right_wrist = np.array([0, 0, 0])
     left_wrist = np.array([0, 0, 0])
     detected_body_list = []
-    # take first image
+    confidences = [] 
+
     print(f"detection loop is running on camera {camera_number}")
     while zed.grab() == sl.ERROR_CODE.SUCCESS:
         detected_bodies = rospy.get_param('detected_body_list')
         # Gab an image
         # Retrieve left image
         zed.retrieve_image(image, sl.VIEW.LEFT, sl.MEM.CPU, display_resolution)
+        zed.retrieve_measure(depth_map, sl.MEASURE.DEPTH) # Retrieve depth
         zed.retrieve_bodies(bodies, body_runtime_param)
         # Update OCV view
         image_left_ocv = image.get_data()
+        depth_image_ocv = depth_map.get_data()
+        # Convert the OpenCV image to an Image message
+        color_img_msg = bridge.cv2_to_imgmsg(image_left_ocv, encoding="bgra8")
+         # Create a new Image message with 32FC1 encoding
+        depth_img_msg = CvBridge().cv2_to_imgmsg(depth_image_ocv, encoding="32FC1")
+        # Publish the Image and Depth messages
+        color_image_pub.publish(color_img_msg)
+        depth_image_pub.publish(depth_img_msg)
 
         detected_body_list.clear()
+        confidences.clear()
         for i, candidate in enumerate(bodies.body_list):
             if candidate.confidence > 60:
                 detected_body_list.append(candidate)
-            
-        confidences = []     
-        for i,detected_body in enumerate(detected_body_list):
-                confidences.append(detected_body.confidence)
+                confidences.append(candidate.confidence)
 
         if len(confidences) > 0: # ==> len(detected_body_list) > 0
             max_value = max(confidences)
@@ -239,17 +251,13 @@ if __name__ == "__main__":
             right_hand_publisher.publish(right_hand_msg)
             continue # do not publish rest of messages an do not viusalize -> "stutter" stems from this
         
-        # print("----------------------")
         # update only if not nan, else use last value
-        if (not math.isnan(detected_body_list[0].keypoint[16][0])):
-            _, left_wrist = get_hand_keypoints(detected_body_list[0])
-        if (not math.isnan(detected_body_list[0].keypoint[17][0])):
-            right_wrist, _ = get_hand_keypoints(detected_body_list[0])
+        _, left_wrist = get_hand_keypoints(detected_body_list[0])
+        right_wrist, _ = get_hand_keypoints(detected_body_list[0])
         # transform hand position to base frame
         right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
         left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
-        #print("Camera {} left hand is at {}".format(camera_number, left_wrist_transformed - [0.09, 0.0, 0.03]))
-        #print("Camera {} right hand is at {}".format(camera_number, right_wrist_transformed - [0.09, 0.0, 0.03]))
+        ####
         left_hand_msg.x = left_wrist_transformed[0] - 0.0 #static offset coming out of nowhere
         left_hand_msg.y = left_wrist_transformed[1] - 0.0
         left_hand_msg.z = left_wrist_transformed[2] - 0.0
@@ -260,7 +268,7 @@ if __name__ == "__main__":
         left_hand_publisher.publish(left_hand_msg)
         right_hand_publisher.publish(right_hand_msg)
 
-        if(visualize):
+        if(False):
             cv_viewer.render_2D(image_left_ocv, image_scale, detected_body_list, body_param.enable_tracking,
                                 body_param.body_format)
             cv2.imshow("ZED | 2D View", image_left_ocv)

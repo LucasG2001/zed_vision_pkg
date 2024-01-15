@@ -2,6 +2,7 @@ from fastsam import FastSAM, FastSAMPrompt
 import numpy as np
 import random
 import open3d as o3d
+from segmentation_utils.helper_functions import inverse_transform
 
 
 def crop_pointcloud(pc: o3d.geometry.PointCloud, max_depth):
@@ -32,6 +33,9 @@ def compute_3d_iou(point_cloud_1: o3d.geometry.PointCloud, point_cloud_2: o3d.ge
     center1 = point_cloud_1.get_center()
     center2 = point_cloud_2.get_center()
     difference = center2 - center1
+    # if object pointcloud centers are further away than 0.4m then return 0 IOU
+    if (np.linalg.norm(difference) > 0.4):
+        return 0
     voxel_diff = np.round((difference/voxel_size), decimals=0).astype(int)
     voxel_size = voxel_size  # Adjust voxel size as needed
     # Voxelization
@@ -136,12 +140,14 @@ def match_segmentations_3d(pc_arr_1, pc_arr_2, voxel_size, threshold=0.05):
         for j, pc2 in enumerate(pc_arr_2):
             iou_matrix[i, j] = compute_3d_iou(pc1, pc2, voxel_size)
     # threshold IOU matrix to filter noisy observations
+    if (np.any(iou_matrix) < 0):
+        print("IOU values under 0 detected!")
     iou_matrix[iou_matrix < threshold] = -1
 
     # Find the best matching label pairs based on maximum IoU values
     corresponding_pointclouds = []
     corresponding_iou = []
-    while np.any(iou_matrix > 0):
+    while np.any(iou_matrix >= 0):
         i, j = np.unravel_index(np.argmax(iou_matrix), iou_matrix.shape)
         corresponding_iou.append(iou_matrix[i, j])
         iou_matrix[i, :] = -1  # Remove row i
@@ -169,3 +175,29 @@ def project_point_clouds_to_global(pcd_arr, R, t, paint=None):
         pcds.append(pcd)
 
     return pcds, homogeneous_matrix
+
+def crop_images(color_image, depth_image, intrinsics, extrinsics, min_bounds, max_bounds):
+    # Step 1: Convert 3D Workspace Bounds to Camera Coordinates
+    min_bounds_cam = np.dot(inverse_transform(extrinsics), np.append(min_bounds, 1))
+    max_bounds_cam = np.dot(inverse_transform(extrinsics), np.append(max_bounds, 1))
+
+    # Step 2: Project 3D Coordinates to 2D Image Coordinates with Depth
+    min_bounds_projected = np.dot(intrinsics, min_bounds_cam[:3] / min_bounds_cam[2])
+    max_bounds_projected = np.dot(intrinsics, max_bounds_cam[:3] / max_bounds_cam[2])
+
+    # Step 3: Determine Cropping Bounds
+    x_min = int(min(min_bounds_projected[0], max_bounds_projected[0]))
+    x_max = int(max(min_bounds_projected[0], max_bounds_projected[0]))
+    y_min = int(min(min_bounds_projected[1], max_bounds_projected[1]))
+    y_max = int(max(min_bounds_projected[1], max_bounds_projected[1]))
+    print(f"image maxima are {x_min}, {x_max}, {y_min}, {y_max}")
+
+    # Step 4: Crop the Color Image
+    cropped_color_image = color_image[y_min:y_max, x_min:x_max, :]
+    cropped_depth_image = depth_image[y_min:y_max, x_min:x_max]
+
+    return cropped_color_image, cropped_depth_image
+
+# Example usage:
+# cropped_image = crop_image(color_image, depth_image, intrinsics_matrix, extrinsics_matrix, min_bounds, max_bounds)
+

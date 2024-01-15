@@ -39,10 +39,15 @@ for i in range (100):
     shape = (tensor_dense.size(0), 1280 * 720, 3)
     # Initialize a sparse tensor with zeros
     scaled_sparse_tensor = torch.sparse_coo_tensor(*shape)
+    print("scaled sparse tensor is of shape ", scaled_sparse_tensor.shape)
     # Map the scaled coordinates and values to the sparse tensor
-    scaled_sparse_tensor.indices()[:, :transformed_indices.size(1)] = transformed_indices
-    scaled_sparse_tensor.values()[:transformed_indices.size(0)] = transformed_values
-    #print("transformed_sparse_tensor is of shape ", transformed_sparse_tensor.shape)
+    # Set the indices[1], indices[2], and scaled_values in the last three dimensions
+    scaled_sparse_tensor.indices()[0] = transformed_indices[0]
+    scaled_sparse_tensor.indices()[1] = transformed_indices[1]
+    scaled_sparse_tensor.indices()[2] = transformed_indices[2]
+    # Set the values in the last dimension
+    scaled_sparse_tensor.values()[:transformed_indices.size(1)] = transformed_values
+    print("transformed_sparse_tensor is of shape ", transformed_sparse_tensor.shape)
 
 end = time.time()
 print(f"whole script took {end-start} seconds and one iteration on average {(end-start)/100} seconds")

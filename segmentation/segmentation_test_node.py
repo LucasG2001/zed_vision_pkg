@@ -42,11 +42,11 @@ def image_publisher():
     bridge = CvBridge()
 
     # Create a publisher for the Image message
-    image_pub1 = rospy.Publisher('/zed_multi/zed2i_short/zed_nodelet_rear/left/image_rect_color/', Image, queue_size=1)
-    image_pub2 = rospy.Publisher('/zed_multi/zed2i_long/zed_nodelet_front/left/image_rect_color/', Image, queue_size=1)
+    image_pub1 = rospy.Publisher('/color_image34783283', Image, queue_size=1)
+    image_pub2 = rospy.Publisher('/color_image32689769', Image, queue_size=1)
 
-    depth_pub1 = rospy.Publisher("/zed_multi/zed2i_short/zed_nodelet_rear/depth/depth_registered/", Image, queue_size=1)
-    depth_pub2 = rospy.Publisher("/zed_multi/zed2i_long/zed_nodelet_front/depth/depth_registered/", Image,  queue_size=1)
+    depth_pub1 = rospy.Publisher("/depth_image34783283", Image, queue_size=1)
+    depth_pub2 = rospy.Publisher("/depth_image32689769", Image,  queue_size=1)
 
     while not rospy.is_shutdown():
         # Convert the OpenCV image to an Image message
