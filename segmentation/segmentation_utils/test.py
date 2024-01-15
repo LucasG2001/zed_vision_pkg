@@ -2,23 +2,7 @@ import torch
 import cv2
 import numpy as np
 import time
-
-DEVICE = torch.device(
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
-)
-
-print("using ", DEVICE)
-
-color_image = cv2.imread('color_img1.png')
-depth_image = cv2.imread('depth_img1.png')
-channel_number = 3
-mask_number = 30
-u = 1280
-v = 720
+import open3d as o3d
 
 
 def create_blobs(visualize=False):
@@ -44,7 +28,7 @@ def create_blobs(visualize=False):
     # Clip values to ensure binary (0 or 1)
     binary_masks = np.clip(binary_masks, 0, 1)
     # Move the NumPy array to PyTorch Tensor on CPU
-    binary_masks_tensor_cpu = torch.from_numpy(binary_masks).to_sparse_coo().int()
+    binary_masks_tensor_cpu = torch.from_numpy(binary_masks)
     # Move the PyTorch Tensor to GPU
     binary_masks_tensor_gpu = binary_masks_tensor_cpu.cuda()
     print("shape of masks is ", binary_masks_tensor_gpu.shape, " on ", binary_masks_tensor_gpu.device)
@@ -71,18 +55,18 @@ def create_xu_yv_meshgrid(image_height=720, image_width=1280):
     # TODO: add intrinsic as parameter
     # Parameters for camera projection
     cx, cy = image_width / 2.0, image_height / 2.0
-    fx, fy, depth_scale = 1.45, 2.3, 1.0
+    fx, fy, depth_scale = 525.45, 546.3, 1.0
     # Create tensors for u and v coordinates
     u = torch.arange(0, image_width).float().cuda().unsqueeze(0)
     v = torch.arange(0, image_height).float().cuda().unsqueeze(1)
-    print("Size of u:", u.size())
-    print("Size of v:", v.size())
+    # print("Size of u:", u.size())
+    # print("Size of v:", v.size())
     # Calculate the unscaled x_u and y_v coordinates
     x_u = (u - cx) / fx
     y_v = (v - cy) / fy
 
-    print("Size of x_u (unscaled x):", x_u.size())
-    print("Size of y_v (unscaled y):", y_v.size())
+    # print("Size of x_u (unscaled x):", x_u.size())
+    # print("Size of y_v (unscaled y):", y_v.size())
 
     return x_u, y_v
 
@@ -95,50 +79,110 @@ def create_stacked_xyz_tensor(np_depth_image):
     depth_factor = 1.0
     # Scale the depth tensor by the depth factor
     z_tensor = depth_tensor * depth_factor
-    print("Size of z_tensor:", z_tensor.size())
+    # print("Size of z_tensor:", z_tensor.size())
     x_u, y_v = create_xu_yv_meshgrid(image_height, image_width)
     # Broadcast and calculate the final x, y, and z coordinates
     x_coordinates_final = x_u.unsqueeze(0).expand_as(z_tensor.unsqueeze(0)) * z_tensor
     y_coordinates_final = y_v.unsqueeze(0).expand_as(z_tensor.unsqueeze(0)) * z_tensor
-    print("Size of x_coordinates_final:", x_coordinates_final.size())
-    print("Size of y_coordinates_final:", y_coordinates_final.size())
+    # print("Size of x_coordinates_final:", x_coordinates_final.size())
+    # print("Size of y_coordinates_final:", y_coordinates_final.size())
     # Stack x, y, and z coordinates along the batch dimension
     stacked_tensor = torch.cat([x_coordinates_final, y_coordinates_final, z_tensor.unsqueeze(0)], dim=0)
     print("Size of stacked_tensor:", stacked_tensor.size())
     return stacked_tensor
 
 
-def visualize_masked_tensor(masked_batch_images, binary_masks_tensor_gpu):
-    # Select one image along the batch dimension
+def visualize_masked_tensor(masked_batch_grids, binary_masks_tensor_gpu):
+    selected_tensor = masked_batch_grids[5]
+    selected_tensor = selected_tensor.to_dense()
+    selected_image_np = masked_batch_grids.to_dense().cpu().numpy().astype(np.float32)
+    # Select one channel of the selected image
+    selected_channel = selected_tensor
+    selected_channel = selected_tensor.permute(1, 2, 0).cpu().numpy().astype(np.float32)
+    # Visualize the selected channel
+    cv2.imshow("Selected Channel", (selected_channel * 255).astype(np.uint8))
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    # Visualize the corresponding mask
+    corresponding_mask = binary_masks_tensor_gpu[5].to_dense()  # Assuming the mask tensor has the same batch size
+    corresponding_mask_np = corresponding_mask.cpu().numpy().astype(np.uint8)
+    a = 1
+    cv2.imshow("Corresponding Mask", corresponding_mask_np * 255)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+def visualize_masked_image(masked_batch_images, binary_masks_tensor_gpu):
     selected_image = masked_batch_images[5]
     selected_image = selected_image.to_dense()
+    selected_image_np = masked_batch_images.to_dense().cpu().numpy().astype(np.float32)
     # Select one channel of the selected image
     selected_channel = selected_image
-    selected_channel = selected_image.permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+    selected_channel = selected_image.permute(1, 2, 0).cpu().numpy().astype(np.float32)
     # Visualize the selected channel
     cv2.imshow("Selected Channel", selected_channel)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
     # Visualize the corresponding mask
     corresponding_mask = binary_masks_tensor_gpu[5].to_dense()  # Assuming the mask tensor has the same batch size
-    cv2.imshow("Corresponding Mask", corresponding_mask.cpu().numpy().astype(np.uint8) * 255)
+    corresponding_mask_np = corresponding_mask.cpu().numpy().astype(
+        np.uint8)  # Assuming the mask tensor has the same batch size
+    a = 1
+    cv2.imshow("Corresponding Mask", corresponding_mask_np * 255)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
 
 def create_pointclouds_from_depth_and_maks(depth_image, color_image, masks):
     color_image_tensor = torch.from_numpy(color_image.transpose(2, 0, 1)).int().cuda()
+    masks_tensor = masks.unsqueeze(1).expand(10, 3, -1, -1).to_sparse()
     xyz_tensor = create_stacked_xyz_tensor(depth_image)
     # xyz_tensor = color_image_tensor
-    # Expand the stacked tensor to create a batch of size 30
-    stacked_triplet = xyz_tensor.unsqueeze(0).expand(10, -1, -1, -1)
+    # Expand the stacked tensor to create a batch of size 30 x 3 x 720 x 1280
+    stacked_triplet = xyz_tensor.unsqueeze(0).expand(10, 3, -1, -1)
     # Mask the stacked batch with the random mask tensor
-    masked_stacked_batch = stacked_triplet * binary_mask_tensor.unsqueeze(1)
+    masked_stacked_batch = stacked_triplet * masks_tensor
     # Display the resulting masked stacked batch shape
     print("Shape of the stacked pointcloud tensors:", masked_stacked_batch.shape)
     print("Final Pointclouds are Sparse Tensor ", masked_stacked_batch.is_sparse)
 
     return masked_stacked_batch
+
+
+def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, masks_tensor, visualize=False):
+    batch_size = masks_tensor.shape[0]
+    color_image_tensor = torch.from_numpy(color_image.transpose(2, 0, 1)).int().cuda().to_sparse()
+    mask_list = masks_tensor.reshape(10, 1, -1)
+    xyz_tensor = create_stacked_xyz_tensor(depth_image).reshape(1, 3, -1)
+    # Expand the stacked tensor to create a batch of size 30 x 3 x 720 x 1280
+    stacked_pointcloud_list = xyz_tensor.expand(10, 3, -1) * mask_list.expand(10, 3, -1).to_sparse()
+    # print("stacked pointcloud list has shape ", stacked_pointcloud_list.shape, "on ", stacked_pointcloud_list.device)
+    # Mask the stacked batch with the random mask tensor
+    # Initialize an empty list to store Open3D point clouds
+    pointclouds = []
+    stacked_pointclouds_np = stacked_pointcloud_list.to_dense().cpu().numpy()
+    nonzero = np.nonzero(stacked_pointclouds_np[0, 0])
+    # Loop over the batch dimension
+    coords = np.zeros((len(nonzero[0]), 3))
+    for i in range(batch_size):
+        coords[:, 0] = stacked_pointclouds_np[i, 0][nonzero]
+        coords[:, 1] = stacked_pointclouds_np[i, 1][nonzero]
+        coords[:, 2] = stacked_pointclouds_np[i, 2][nonzero]
+        # print("x coords shape is ", x_coords.shape)
+        # print("concatenated coordinates have shape ", coords.shape)
+        # print("coords nonzero have shape ", torch.nonzero(coords).shape)
+        # Extract coordinates and colors for the current batch element
+        # Create an Open3D point cloud
+        pointcloud = o3d.geometry.PointCloud()
+        pointcloud.points = o3d.utility.Vector3dVector(coords)
+        # pointcloud.colors = o3d.utility.Vector3dVector(colors_values.cpu().numpy())    #
+        # Append the point cloud to the list
+        # pointclouds.append(pointcloud)
+
+    # Visualize the point clouds (optional)
+    if visualize:
+        for pc in pointclouds:
+            o3d.visualization.draw_geometries([pc])
 
 
 if __name__ == "__main__":  # This is not a function but an if clause !!'
@@ -153,21 +197,12 @@ if __name__ == "__main__":  # This is not a function but an if clause !!'
     print("using ", DEVICE)
 
     # Set the dimensions
-    visualize = False
     color_image = cv2.imread('color_img1.png')
-    depth_image = cv2.imread('depth_img1.png', cv2.IMREAD_GRAYSCALE)
-    depth_image_tensor = torch.from_numpy(depth_image).float().cuda()
-    color_image_tensor = torch.from_numpy(color_image.transpose(2, 0, 1)).int().cuda()
-    if visualize:
-        cv2.imshow("color image ", color_image)
-        cv2.imshow(" depth image ", depth_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-    binary_mask_tensor = create_blobs(visualize=True).cuda()  # returns sparse tensor
+    depth_image = cv2.imread('depth_img1.png', cv2.IMREAD_GRAYSCALE) / 100
+    binary_mask_tensor = create_blobs(visualize=False)  # returns sparse tensor
     start = time.time()
-    for i in range(50):
-        masked_image_batch = create_pointclouds_from_depth_and_maks(depth_image, color_image, binary_mask_tensor)
+    for i in range(10):
+        create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, binary_mask_tensor, visualize=False)
+        # masked_stack_batch = create_pointclouds_from_depth_and_maks(depth_image, color_image, binary_mask_tensor)
     elapsed_time = time.time() - start
-    visualize_masked_tensor(masked_image_batch, binary_mask_tensor)
-    print(f"loop took {elapsed_time} seconds, which amounts to {elapsed_time/50} seconds per loop")
+    print("loop took ", elapsed_time, "seconds or ", elapsed_time / 10, " seconds per iteration")
