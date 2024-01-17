@@ -21,6 +21,7 @@ max_bound = np.array([0.8, 0.6, 0.9])
 # cre eate an axis-aligned bounding box
 workspace = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
 
+
 def create_blobs(visualize=False):
     num_masks = 30
     height = 720
@@ -48,21 +49,25 @@ def create_blobs(visualize=False):
     # Move the PyTorch Tensor to GPU
     binary_masks_tensor_gpu = binary_masks_tensor_cpu.cuda()
     print("shape of masks is ", binary_masks_tensor_gpu.shape, " on ", binary_masks_tensor_gpu.device)
+    # Sum over the last two dimensions
+    sum_tensor = torch.sum(binary_masks_tensor_gpu, dim=(-2, -1), keepdim=True)
+    print(sum_tensor)
     if (visualize):
         # Move the array to CPU (not necessary if you're already running on CPU)
+
         binary_masks_cpu = binary_masks.astype(np.uint8)
+        for i in range(binary_masks_cpu.shape[0]):
+            # Plot one of the masks using OpenCV
+            mask_to_plot = binary_masks_cpu[i]  # Change index to plot a different mask
 
-        # Plot one of the masks using OpenCV
-        mask_to_plot = binary_masks_cpu[5]  # Change index to plot a different mask
+            # Create a grayscale image
+            image_to_plot = np.zeros((height, width), dtype=np.uint8)
+            image_to_plot[mask_to_plot == 1] = 255  # Set ones to white
 
-        # Create a grayscale image
-        image_to_plot = np.zeros((height, width), dtype=np.uint8)
-        image_to_plot[mask_to_plot == 1] = 255  # Set ones to white
-
-        # Display the image using OpenCV
-        cv2.imshow('Mask to Plot', image_to_plot)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+            # Display the image using OpenCV
+            cv2.imshow('Mask to Plot', image_to_plot)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 
     return binary_masks_tensor_gpu
 
@@ -165,43 +170,51 @@ def create_pointclouds_from_depth_and_maks(depth_image, color_image, masks):
     return masked_stacked_batch
 
 
-def create_pointcloud_tensor_from_color_and_depth(depth_image, masks_tensor, transform, workspace, visualize=False):
+def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, masks_tensor, transform, workspace,
+                                                  visualize=False):
     batch_size = masks_tensor.shape[0]
+    color_image = np.reshape(color_image, (-1, 3))
     mask_list = masks_tensor.reshape(batch_size, 1, -1)
     xyz_tensor = create_stacked_xyz_tensor(depth_image).reshape(1, 3, -1)
     # Expand the stacked tensor to create a batch of size 30 x 3 x 720 x 1280
     # create tensor of size batch, 3, max_no_nonzero_points and fill it with the nonzero values
     stacked_pointcloud_list = xyz_tensor.expand(batch_size, 3, -1) * mask_list.expand(batch_size, 3, -1)
-    stacked_pointcloud_list = stacked_pointcloud_list[:, :, ::4]
+    stacked_pointcloud_list = stacked_pointcloud_list[:, :, ::5]
     # print("clipped pointcloud list has shape ", stacked_pointcloud_list.shape, "on ", stacked_pointcloud_list.device,
-         # " with max_length of ")
+    # " with max_length of ")
     # Initialize an empty list to store Open3D point clouds
     pointclouds = []
     stacked_pointclouds_np = stacked_pointcloud_list.detach().cpu().numpy()  # THIS IS THE BOTTLENECK!!!!
-    nonzero = np.nonzero(stacked_pointclouds_np[0, 0])
-    # Loop over the batch dimension
-    coords = np.zeros((len(nonzero[0]), 3))
+    # Next problem here: This length is static!
     for i in range(batch_size):
-        coords[:, 0] = stacked_pointclouds_np[i, 0][nonzero]
-        coords[:, 1] = stacked_pointclouds_np[i, 1][nonzero]
-        coords[:, 2] = stacked_pointclouds_np[i, 2][nonzero]
+        nonzero = np.nonzero(stacked_pointclouds_np[i, 0])
+        # Loop over the batch dimension
+        coords = np.zeros((len(nonzero[0]), 3))
+        colors = np.zeros((len(nonzero[0]), 3))
+        coords[:, 0] = stacked_pointclouds_np[i, 0][nonzero]  # x coordinate
+        coords[:, 1] = stacked_pointclouds_np[i, 1][nonzero]  # y coordinate
+        coords[:, 2] = stacked_pointclouds_np[i, 2][nonzero]  # z coordinate
+        colors[:, 0] = color_image[:, 0][nonzero] / 255  # z coordinate
+        colors[:, 1] = color_image[:, 1][nonzero] / 255  # x coordinate
+        colors[:, 2] = color_image[:, 2][nonzero] / 255  # y coordinate
         # print("x coords shape is ", x_coords.shape)
         # print("concatenated coordinates have shape ", coords.shape)
         # print("coords nonzero have shape ", torch.nonzero(coords).shape)
         pointcloud = o3d.geometry.PointCloud()
         pointcloud.points = o3d.utility.Vector3dVector(coords)
+        pointcloud.colors = o3d.utility.Vector3dVector(np.flip(colors, axis=1))
         pointcloud.transform(transform)
         # Append the point cloud to the list
-        pointcloud = pointcloud.crop(workspace)
+        # pointcloud = pointcloud.crop(workspace)
 
-        print("total of ", len(pointcloud.points), " points")
-                
+        # print("total of ", len(pointcloud.points), " points")
+
         # if len(pointcloud.points) > 100:  # delete all pointclouds with less than 100 points
         #     pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
         pointclouds.append(pointcloud)
 
     # Visualize the point clouds (optional)
-        
+
     print("lenght of pointclouds is ", len(pointclouds))
 
     if visualize:
@@ -231,7 +244,9 @@ if __name__ == "__main__":  # This is not a function but an if clause !!'
     profiler.enable()
     start = time.time()
     for i in range(2):
-        pointclouds = create_pointcloud_tensor_from_color_and_depth(depth_image, binary_mask_tensor,transform=np.eye(4,4), workspace=workspace, visualize=False)
+        pointclouds = create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, binary_mask_tensor,
+                                                                    transform=np.eye(4, 4), workspace=workspace,
+                                                                    visualize=False)
         # masked_stack_batch = create_pointclouds_from_depth_and_maks(depth_image, color_image, binary_mask_tensor)
     profiler.disable()
     elapsed_time = time.time() - start
@@ -241,6 +256,3 @@ if __name__ == "__main__":  # This is not a function but an if clause !!'
 
     stats = pstats.Stats(profiler)
     stats.print_stats()
-    if True:
-        for pc in pointclouds:
-            o3d.visualization.draw_geometries([pc])
