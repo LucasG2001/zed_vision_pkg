@@ -85,7 +85,6 @@ def create_xu_yv_meshgrid(image_height=720, image_width=1280):
     # Calculate the unscaled x_u and y_v coordinates
     x_u = (u - cx) / fx
     y_v = (v - cy) / fy
-
     # print("Size of x_u (unscaled x):", x_u.size())
     # print("Size of y_v (unscaled y):", y_v.size())
 
@@ -113,24 +112,23 @@ def create_stacked_xyz_tensor(np_depth_image):
     return stacked_tensor
 
 
-def visualize_masked_tensor(masked_batch_grids, binary_masks_tensor_gpu):
-    selected_tensor = masked_batch_grids[5]
-    selected_tensor = selected_tensor.to_dense()
-    selected_image_np = masked_batch_grids.to_dense().cpu().numpy().astype(np.float32)
-    # Select one channel of the selected image
-    selected_channel = selected_tensor
-    selected_channel = selected_tensor.permute(1, 2, 0).cpu().numpy().astype(np.float32)
-    # Visualize the selected channel
-    cv2.imshow("Selected Channel", (selected_channel * 255).astype(np.uint8))
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    # Visualize the corresponding mask
-    corresponding_mask = binary_masks_tensor_gpu[5].to_dense()  # Assuming the mask tensor has the same batch size
-    corresponding_mask_np = corresponding_mask.cpu().numpy().astype(np.uint8)
-    a = 1
-    cv2.imshow("Corresponding Mask", corresponding_mask_np * 255)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+def visualize_masked_tensor(color_image, binary_masks_tensor_gpu, height=720, width=1280):
+    binary_masks_cpu = binary_masks_tensor_gpu.detach().cpu().numpy().astype(np.uint8)
+    for i in range(binary_masks_cpu.shape[0]):
+        color_to_plot = np.copy(color_image)
+        # Plot one of the masks using OpenCV
+        mask_to_plot = binary_masks_cpu[i]  # Change index to plot a different mask
+        # Create a grayscale image
+        image_to_plot = np.zeros((height, width), dtype=np.uint8)
+        image_to_plot[mask_to_plot == 1] = 255  # Set ones to white
+        color_to_plot[mask_to_plot == 0] = 0
+        # Display the image using OpenCV
+        cv2.imshow('Mask to Plot', image_to_plot)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        cv2.imshow('Masked image ', color_to_plot)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
 
 def visualize_masked_image(masked_batch_images, binary_masks_tensor_gpu):
@@ -154,70 +152,66 @@ def visualize_masked_image(masked_batch_images, binary_masks_tensor_gpu):
     cv2.destroyAllWindows()
 
 
-def create_pointclouds_from_depth_and_maks(depth_image, color_image, masks):
-    color_image_tensor = torch.from_numpy(color_image.transpose(2, 0, 1)).int().cuda()
-    masks_tensor = masks.unsqueeze(1).expand(10, 3, -1, -1).to_sparse()
-    xyz_tensor = create_stacked_xyz_tensor(depth_image)
-    # xyz_tensor = color_image_tensor
-    # Expand the stacked tensor to create a batch of size 30 x 3 x 720 x 1280
-    stacked_triplet = xyz_tensor.unsqueeze(0).expand(10, 3, -1, -1)
-    # Mask the stacked batch with the random mask tensor
-    masked_stacked_batch = stacked_triplet * masks_tensor
-    # Display the resulting masked stacked batch shape
-    print("Shape of the stacked pointcloud tensors:", masked_stacked_batch.shape)
-    print("Final Pointclouds are Sparse Tensor ", masked_stacked_batch.is_sparse)
-
-    return masked_stacked_batch
-
-
 def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, masks_tensor, transform, workspace,
                                                   visualize=False):
     batch_size = masks_tensor.shape[0]
-    color_image = np.reshape(color_image, (-1, 3))
+    color_image_list = np.reshape(color_image, (-1, 3))
     mask_list = masks_tensor.reshape(batch_size, 1, -1)
     xyz_tensor = create_stacked_xyz_tensor(depth_image).reshape(1, 3, -1)
-    # Expand the stacked tensor to create a batch of size 30 x 3 x 720 x 1280
-    # create tensor of size batch, 3, max_no_nonzero_points and fill it with the nonzero values
-    stacked_pointcloud_list = xyz_tensor.expand(batch_size, 3, -1) * mask_list.expand(batch_size, 3, -1)
-    stacked_pointcloud_list = stacked_pointcloud_list[:, :, ::5]
-    # print("clipped pointcloud list has shape ", stacked_pointcloud_list.shape, "on ", stacked_pointcloud_list.device,
-    # " with max_length of ")
+    depth_tensor = xyz_tensor[:, 2, :]
+    xy_grid_np = xyz_tensor[:, 0:2, :].detach().cpu().numpy()
+    # mask only the depth tensor, all else would be redundant
+    masked_depth_image_list = depth_tensor.expand(batch_size, 1, -1) * mask_list
+    # TODO: Downsampling has some unforseen effect on created pointclouds
+    # TODO: the index number of the list entry gets divided by the subsampling factor.
+    # so when the old list has size n, the new has size n/4 and all corresponding indices will get /4
+    masked_depth_image_list = masked_depth_image_list[:, :, ::4]
+    color_image_list = color_image_list[::4, :]
+    xy_grid_np = xy_grid_np[:, :, ::4]
     # Initialize an empty list to store Open3D point clouds
     pointclouds = []
-    stacked_pointclouds_np = stacked_pointcloud_list.detach().cpu().numpy()  # THIS IS THE BOTTLENECK!!!!
+    masked_depth_image_list_np = masked_depth_image_list.detach().cpu().numpy()  # THIS IS THE BOTTLENECK!!!!
     # Next problem here: This length is static!
     for i in range(batch_size):
-        nonzero = np.nonzero(stacked_pointclouds_np[i, 0])
+        # TODO: still not correct but at least pointclouds are not empty and it's way faster
+        nonzero = np.nonzero(masked_depth_image_list_np[i, 0])  # number of nonzero pixels
         # Loop over the batch dimension
         coords = np.zeros((len(nonzero[0]), 3))
         colors = np.zeros((len(nonzero[0]), 3))
-        coords[:, 0] = stacked_pointclouds_np[i, 0][nonzero]  # x coordinate
-        coords[:, 1] = stacked_pointclouds_np[i, 1][nonzero]  # y coordinate
-        coords[:, 2] = stacked_pointclouds_np[i, 2][nonzero]  # z coordinate
-        colors[:, 0] = color_image[:, 0][nonzero] / 255  # z coordinate
-        colors[:, 1] = color_image[:, 1][nonzero] / 255  # x coordinate
-        colors[:, 2] = color_image[:, 2][nonzero] / 255  # y coordinate
+        coords[:, 0] = xy_grid_np[0, 0][nonzero]  # x coordinate (maybe we can batch extract this earlier?
+        coords[:, 1] = xy_grid_np[0, 1][nonzero]  # y coordinate
+        coords[:, 2] = masked_depth_image_list_np[i, 0][nonzero]  # z coordinate
+        # TODO: There is a mismatch between the color image size and the mask size, since it was massively downsampled
+        colors[:, 0] = color_image_list[:, 0][nonzero] / 255.0  # z coordinate
+        colors[:, 1] = color_image_list[:, 1][nonzero] / 255.0  # x coordinate
+        colors[:, 2] = color_image_list[:, 2][nonzero] / 255.0  # y coordinate
         # print("x coords shape is ", x_coords.shape)
-        # print("concatenated coordinates have shape ", coords.shape)
-        # print("coords nonzero have shape ", torch.nonzero(coords).shape)
+        # visualize
+        # empty = np.zeros((720 * 1280, 3))
+        # empty[nonzero, 0:3] = colors[:, 0:3] * 255
+        # empty = np.reshape(empty, (720, 1280, 3), order='C').astype(np.uint8)
+        # empty = empty[::2, ::2, :]
+        # cv2.imshow("constructed color", empty)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
+        # visualize over
         pointcloud = o3d.geometry.PointCloud()
         pointcloud.points = o3d.utility.Vector3dVector(coords)
-        pointcloud.colors = o3d.utility.Vector3dVector(np.flip(colors, axis=1))
+        pointcloud.colors = o3d.utility.Vector3dVector(colors)
+        pointcloud.uniform_down_sample(every_k_points=3)
         pointcloud.transform(transform)
         # Append the point cloud to the list
         # pointcloud = pointcloud.crop(workspace)
 
         # print("total of ", len(pointcloud.points), " points")
-
-        # if len(pointcloud.points) > 100:  # delete all pointclouds with less than 100 points
-        #     pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
         pointclouds.append(pointcloud)
 
     # Visualize the point clouds (optional)
 
-    print("lenght of pointclouds is ", len(pointclouds))
+    print("length of pointclouds is ", len(pointclouds))
 
     if visualize:
+        # visualize_masked_tensor(color_image, masks_tensor)
         for pc in pointclouds:
             o3d.visualization.draw_geometries([pc])
 
@@ -247,7 +241,6 @@ if __name__ == "__main__":  # This is not a function but an if clause !!'
         pointclouds = create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, binary_mask_tensor,
                                                                     transform=np.eye(4, 4), workspace=workspace,
                                                                     visualize=False)
-        # masked_stack_batch = create_pointclouds_from_depth_and_maks(depth_image, color_image, binary_mask_tensor)
     profiler.disable()
     elapsed_time = time.time() - start
     print("loop took ", elapsed_time, "seconds or ", elapsed_time / 2, " seconds per iteration")
