@@ -6,7 +6,10 @@ import open3d as o3d
 import os
 import cProfile
 import pstats
-from scipy.sparse import coo_matrix
+from segmentation.fastsam import FastSAM
+
+model_path = 'FastSAM-s.pt'
+nn_model = FastSAM(model_path)
 
 # Path to the script's directory
 script_directory = os.path.dirname(os.path.abspath(__file__))
@@ -22,7 +25,22 @@ max_bound = np.array([0.8, 0.6, 0.9])
 workspace = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
 
 
-def create_blobs(visualize=False):
+
+def segment_images(color_images, nn_model, device, image_size=1024, confidence=0.4, iou=0.9):
+    segstart = time.time()
+    print("segmenting images and masking on gpu")
+    with torch.no_grad():
+        results = nn_model(color_images, device=device, retina_masks=True,
+                           imgsz=image_size, conf=confidence,
+                           iou=iou)
+
+    print("Segmentation took, ", time.time() - segstart, " seconds")
+    mask_tensor1 = results[0].masks.data
+    mask_tensor2 = results[1].masks.data
+    print("shape of mask tensors is ", mask_tensor1.shape, " and ", mask_tensor2.shape)
+
+
+def create_random_blobs(visualize=False):
     num_masks = 30
     height = 720
     width = 1280
@@ -232,7 +250,7 @@ if __name__ == "__main__":  # This is not a function but an if clause !!'
     # Set the dimensions
     color_image = cv2.imread(image_path1)
     depth_image = cv2.imread(depth_path1, cv2.IMREAD_GRAYSCALE) / 100
-    binary_mask_tensor = create_blobs(visualize=False)  # returns sparse tensor
+    binary_mask_tensor = create_random_blobs(visualize=False)  # returns sparse tensor
     xyz_list = create_stacked_xyz_tensor(depth_image).reshape(1, 3, -1).detach().cpu().numpy()
     profiler = cProfile.Profile()
     profiler.enable()
