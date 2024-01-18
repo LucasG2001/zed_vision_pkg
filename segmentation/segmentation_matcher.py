@@ -47,6 +47,7 @@ class SegmentationMatcher:
         # full point cloud for ICP
         self.global_pointclouds = [o3d.geometry.PointCloud(), o3d.geometry.PointCloud()]
         self.icp = o3d.pipelines.registration.RegistrationResult()
+        self.icp.transformation = np.eye(4,4)
         # Define the workspace box
         self.min_bound = np.array([-0.2, -0.6, -0.1])
         self.max_bound = np.array([0.8, 0.6, 0.9])
@@ -363,8 +364,10 @@ class SegmentationMatcher:
         print(f"shape of filtered mask tensors is {mask_tensor1.size()} and {mask_tensor2.size()} ")
         # Convert NumPy arrays to PyTorch tensors and move to GPU
         pc_start_time = time.time()
-        self.pc_array_1 = create_pointcloud_tensor_from_color_and_depth(color_image= self.color_images[0], depth_image=self.depth_images[0], masks_tensor=mask_tensor1, visualize=False)
-        self.pc_array_2 = create_pointcloud_tensor_from_color_and_depth(color_image= self.color_images[1], depth_image=self.depth_images[1], masks_tensor=mask_tensor2, visualize=False)
+        self.pc_array_1 = create_pointcloud_tensor_from_color_and_depth(self.color_images[0], depth_image=self.depth_images[0], masks_tensor=mask_tensor1,
+                                                                         transform=self.transforms[0], workspace=self.workspace, visualize=False)
+        self.pc_array_2 = create_pointcloud_tensor_from_color_and_depth(self.color_images[1], depth_image=self.depth_images[1], masks_tensor=mask_tensor2, 
+                                                                        transform=self.transforms[1], workspace=self.workspace, visualize=False)
         pc_end_time = time.time()
         print("creating pointcloud took ", pc_end_time - pc_start_time)
 

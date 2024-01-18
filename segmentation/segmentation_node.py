@@ -81,7 +81,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     color_images = image_subscriber.get_images()[0]
     depth_images = image_subscriber.get_images()[1]
     segmentation_parameters = SegmentationParameters(1024, conf=0.4, iou=0.9)
-    segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, min_dist=0.0, cutoff=7.8, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
+    segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, min_dist=0.8, cutoff=1.9, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
     segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
      # Set up logging
     iteration_times = []
@@ -110,7 +110,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 segmenter.full_gpu_segment_and_mask(visualize=False)       
                 # segmenter.segment_and_mask_images_gpu(visualize=False)
                 print("Pointcloud generation at, ", time.time()-start, " seconds")
-                # segmenter.transform_pointclouds_icp(visualize=False)
+                segmenter.transform_pointclouds_icp(visualize=False)
                 print("Alignment at, ", time.time()-start, " seconds")
                 correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.04, threshold=0.05) 
                 print("Corrrespondence match at, ", time.time()-start, " seconds")

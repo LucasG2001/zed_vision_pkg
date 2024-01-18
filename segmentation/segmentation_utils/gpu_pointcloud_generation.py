@@ -198,13 +198,13 @@ def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, mask
         pointcloud = o3d.geometry.PointCloud()
         pointcloud.points = o3d.utility.Vector3dVector(coords)
         pointcloud.colors = o3d.utility.Vector3dVector(colors)
-        pointcloud.uniform_down_sample(every_k_points=3)
+        pointcloud.uniform_down_sample(every_k_points=2)
         pointcloud.transform(transform)
         # Append the point cloud to the list
-        # pointcloud = pointcloud.crop(workspace)
-
+        pointcloud = pointcloud.crop(workspace)
+        if len(pointcloud.points) > 100:
         # print("total of ", len(pointcloud.points), " points")
-        pointclouds.append(pointcloud)
+            pointclouds.append(pointcloud)
 
     # Visualize the point clouds (optional)
 
