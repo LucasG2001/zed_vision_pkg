@@ -6,7 +6,10 @@ import open3d as o3d
 import os
 import cProfile
 import pstats
-from segmentation.fastsam import FastSAM
+from segmentation.fastsam import FastSAM, FastSAMPrompt
+from segmentation.segmentation_matcher import SegmentationMatcher
+from segmentation.segmentation_matcher import SegmentationParameters
+from bilateral_filter import apply_bilateral_filter, apply_aggressive_gaussian_filter, apply_aggressive_median_filter
 
 model_path = 'FastSAM-s.pt'
 nn_model = FastSAM(model_path)
@@ -14,10 +17,10 @@ nn_model = FastSAM(model_path)
 # Path to the script's directory
 script_directory = os.path.dirname(os.path.abspath(__file__))
 # Path to the image file
-image_path1 = os.path.join(script_directory, 'color_img1.png')
-depth_path1 = os.path.join(script_directory, 'depth_img1.png')
-image_path2 = os.path.join(script_directory, 'color_img2.png')
-depth_path2 = os.path.join(script_directory, 'depth_img2.png')
+image_path1 = os.path.join(script_directory, 'color_image1.png')
+depth_path1 = os.path.join(script_directory, 'depth_image1.png')
+image_path2 = os.path.join(script_directory, 'color_image2.png')
+depth_path2 = os.path.join(script_directory, 'depth_image2.png')
 
 min_bound = np.array([-0.2, -0.6, -0.1])
 max_bound = np.array([0.8, 0.6, 0.9])
@@ -25,19 +28,26 @@ max_bound = np.array([0.8, 0.6, 0.9])
 workspace = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
 
 
-
-def segment_images(color_images, nn_model, device, image_size=1024, confidence=0.4, iou=0.9):
+def segment_images(color_images, device, image_size=1024, confidence=0.6, iou=0.95, prompt=False):
     segstart = time.time()
     print("segmenting images and masking on gpu")
     with torch.no_grad():
         results = nn_model(color_images, device=device, retina_masks=True,
                            imgsz=image_size, conf=confidence,
                            iou=iou)
+        if prompt:
+            prompt_process = FastSAMPrompt(image_path1, results, device=DEVICE)
+            # text prompt
+            ann = prompt_process.text_prompt(text='laptop')
+            print("plotting rsult of text prompt")
+            prompt_process.plot(annotations=ann, output_path='output.jpg', )
 
     print("Segmentation took, ", time.time() - segstart, " seconds")
     mask_tensor1 = results[0].masks.data
     mask_tensor2 = results[1].masks.data
     print("shape of mask tensors is ", mask_tensor1.shape, " and ", mask_tensor2.shape)
+
+    return mask_tensor1, mask_tensor2
 
 
 def create_random_blobs(visualize=False):
@@ -90,7 +100,7 @@ def create_random_blobs(visualize=False):
     return binary_masks_tensor_gpu
 
 
-def create_xu_yv_meshgrid(image_height=720, image_width=1280):
+def create_xu_yv_meshgrid(intrinsic, image_height=720, image_width=1280):
     # TODO: add intrinsic as parameter
     # Parameters for camera projection
     cx, cy = image_width / 2.0, image_height / 2.0
@@ -109,7 +119,7 @@ def create_xu_yv_meshgrid(image_height=720, image_width=1280):
     return x_u, y_v
 
 
-def create_stacked_xyz_tensor(np_depth_image):
+def create_stacked_xyz_tensor(intrinsic, np_depth_image):
     depth_tensor = torch.tensor(np_depth_image.copy(), device='cuda', dtype=torch.float32).cuda()
     # Assuming you have an image of size 720x1280
     image_height, image_width = 720, 1280
@@ -118,7 +128,7 @@ def create_stacked_xyz_tensor(np_depth_image):
     # Scale the depth tensor by the depth factor
     z_tensor = depth_tensor * depth_factor
     # print("Size of z_tensor:", z_tensor.size())
-    x_u, y_v = create_xu_yv_meshgrid(image_height, image_width)
+    x_u, y_v = create_xu_yv_meshgrid(intrinsic, image_height, image_width)
     # Broadcast and calculate the final x, y, and z coordinates
     x_coordinates_final = x_u.unsqueeze(0).expand_as(z_tensor.unsqueeze(0)) * z_tensor
     y_coordinates_final = y_v.unsqueeze(0).expand_as(z_tensor.unsqueeze(0)) * z_tensor
@@ -130,23 +140,35 @@ def create_stacked_xyz_tensor(np_depth_image):
     return stacked_tensor
 
 
+# TODO: visualize full segmented image
 def visualize_masked_tensor(color_image, binary_masks_tensor_gpu, height=720, width=1280):
     binary_masks_cpu = binary_masks_tensor_gpu.detach().cpu().numpy().astype(np.uint8)
+    # for i in range(binary_masks_cpu.shape[0]):
+    #    color_to_plot = np.copy(color_image)
+    #    # Plot one of the masks using OpenCV
+    #    mask_to_plot = binary_masks_cpu[i]  # Change index to plot a different mask
+    #    # Create a grayscale image
+    #    image_to_plot = np.zeros((height, width), dtype=np.uint8)
+    #    image_to_plot[mask_to_plot == 1] = 255  # Set ones to white
+    #    color_to_plot[mask_to_plot == 0] = 0
+    #    # Display the image using OpenCV
+    #    cv2.imshow('Mask to Plot', image_to_plot)
+    #    cv2.waitKey(0)
+    #    cv2.destroyAllWindows()
+    #    cv2.imshow('Masked image ', color_to_plot)
+    #    cv2.waitKey(0)
+    #    cv2.destroyAllWindows()
+
     for i in range(binary_masks_cpu.shape[0]):
-        color_to_plot = np.copy(color_image)
         # Plot one of the masks using OpenCV
         mask_to_plot = binary_masks_cpu[i]  # Change index to plot a different mask
         # Create a grayscale image
         image_to_plot = np.zeros((height, width), dtype=np.uint8)
-        image_to_plot[mask_to_plot == 1] = 255  # Set ones to white
-        color_to_plot[mask_to_plot == 0] = 0
+        color_image[mask_to_plot == 1, 0:3] = np.random.randint(0, 256, size=3)  # Set ones to white
         # Display the image using OpenCV
-        cv2.imshow('Mask to Plot', image_to_plot)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        cv2.imshow('Masked image ', color_to_plot)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+    cv2.imshow('Masked image ', color_image)
+    cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
 
 def visualize_masked_image(masked_batch_images, binary_masks_tensor_gpu):
@@ -170,12 +192,36 @@ def visualize_masked_image(masked_batch_images, binary_masks_tensor_gpu):
     cv2.destroyAllWindows()
 
 
+def preprocessImage(color_image, depth_image, transform, intrinsic, min_bounds, max_bounds):
+    xyz_tensor = create_stacked_xyz_tensor(intrinsic, depth_image)
+    print("shape of xyz_tensor is ", xyz_tensor.shape)
+    xyz_tensor_np = xyz_tensor.detach().cpu().numpy()
+    xyz_homogenous = np.vstack((xyz_tensor_np, np.ones((1, xyz_tensor_np.shape[1], xyz_tensor.shape[2]))))
+    # Apply homogeneous transformation
+    xyz_transformed = np.matmul(transform, xyz_homogenous.reshape(4, -1)).reshape(xyz_homogenous.shape)[:3, :, :]
+    # Apply bounds check and mask
+    outside_bounds_mask = np.any((xyz_transformed < min_bounds[:, np.newaxis, np.newaxis]) |
+                                 (xyz_transformed > max_bounds[:, np.newaxis, np.newaxis]), axis=0)
+
+    # Set pixels to 0 in both the depth and color image where outside of bounds
+    xyz_transformed[:, outside_bounds_mask] = 0
+    depth_image[outside_bounds_mask] = 0
+    color_image[outside_bounds_mask] = 0
+    cv2.imshow("cropped color image", color_image)
+    cv2.imshow("cropped depth image", depth_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    return color_image, depth_image, xyz_transformed
+
+
 def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, masks_tensor, transform, workspace,
+                                                  intrinsic,
                                                   visualize=False):
     batch_size = masks_tensor.shape[0]
     color_image_list = np.reshape(color_image, (-1, 3))
     mask_list = masks_tensor.reshape(batch_size, 1, -1)
-    xyz_tensor = create_stacked_xyz_tensor(depth_image).reshape(1, 3, -1)
+    xyz_tensor = create_stacked_xyz_tensor(intrinsic, depth_image).reshape(1, 3, -1)
     depth_tensor = xyz_tensor[:, 2, :]
     xy_grid_np = xyz_tensor[:, 0:2, :].detach().cpu().numpy()
     # mask only the depth tensor, all else would be redundant
@@ -183,9 +229,9 @@ def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, mask
     # TODO: Downsampling has some unforseen effect on created pointclouds
     # TODO: the index number of the list entry gets divided by the subsampling factor.
     # so when the old list has size n, the new has size n/4 and all corresponding indices will get /4
-    masked_depth_image_list = masked_depth_image_list[:, :, ::4]
-    color_image_list = color_image_list[::4, :]
-    xy_grid_np = xy_grid_np[:, :, ::4]
+    masked_depth_image_list = masked_depth_image_list[:, :, ::6]
+    color_image_list = color_image_list[::6, :]
+    xy_grid_np = xy_grid_np[:, :, ::6]
     # Initialize an empty list to store Open3D point clouds
     pointclouds = []
     masked_depth_image_list_np = masked_depth_image_list.detach().cpu().numpy()  # THIS IS THE BOTTLENECK!!!!
@@ -203,25 +249,15 @@ def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, mask
         colors[:, 0] = color_image_list[:, 0][nonzero] / 255.0  # z coordinate
         colors[:, 1] = color_image_list[:, 1][nonzero] / 255.0  # x coordinate
         colors[:, 2] = color_image_list[:, 2][nonzero] / 255.0  # y coordinate
-        # print("x coords shape is ", x_coords.shape)
-        # visualize
-        # empty = np.zeros((720 * 1280, 3))
-        # empty[nonzero, 0:3] = colors[:, 0:3] * 255
-        # empty = np.reshape(empty, (720, 1280, 3), order='C').astype(np.uint8)
-        # empty = empty[::2, ::2, :]
-        # cv2.imshow("constructed color", empty)
-        # cv2.waitKey(0)
-        # cv2.destroyAllWindows()
-        # visualize over
         pointcloud = o3d.geometry.PointCloud()
         pointcloud.points = o3d.utility.Vector3dVector(coords)
         pointcloud.colors = o3d.utility.Vector3dVector(colors)
-        pointcloud.uniform_down_sample(every_k_points=2)
         pointcloud.transform(transform)
-        # Append the point cloud to the list
+        # Crop points not contined in the relevant workspace
         pointcloud = pointcloud.crop(workspace)
-        if len(pointcloud.points) > 100:
-        # print("total of ", len(pointcloud.points), " points")
+        if len(pointcloud.points) > 10:
+            # print("total of ", len(pointcloud.points), " points")
+            pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
             pointclouds.append(pointcloud)
 
     # Visualize the point clouds (optional)
@@ -229,14 +265,33 @@ def create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, mask
     print("length of pointclouds is ", len(pointclouds))
 
     if visualize:
-        # visualize_masked_tensor(color_image, masks_tensor)
-        for pc in pointclouds:
-            o3d.visualization.draw_geometries([pc])
+        visualize_masked_tensor(color_image, masks_tensor)
+        o3d.visualization.draw_geometries(pointclouds, width=1280, height=1280)
+        # for pc in pointclouds:
+        #     o3d.visualization.draw_geometries([pc])
 
     return pointclouds
 
 
 if __name__ == "__main__":  # This is not a function but an if clause !!'
+    o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
+                                                       fx=533.77, fy=533.53,
+                                                       cx=661.87, cy=351.29)
+
+    o3d_intrinsic2 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
+                                                       fx=534.28, fy=534.28,
+                                                       cx=666.59, cy=354.94)
+
+    T_SC1 = np.array([[-0.9521, 0.2895, -0.0985, 0.0455],
+                      [-0.3032, -0.8516, 0.4276, -0.8019],
+                      [0.0399, 0.4369, 0.8986, -1.3511],
+                      [0.0000, 0.0000, 0.0000, 1.0000]])
+
+    T_SC2 = np.array([[0.4548, 0.8205, -0.3464, 0.83],
+                      [-0.8904, 0.4108, -0.1961, 1.77],
+                      [-0.0186, 0.3976, 0.9174, -1.71],
+                      [0.0000, 0.0000, 0.0000, 1.0000]])
+
     DEVICE = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -248,22 +303,89 @@ if __name__ == "__main__":  # This is not a function but an if clause !!'
     print("using ", DEVICE)
 
     # Set the dimensions
-    color_image = cv2.imread(image_path1)
-    depth_image = cv2.imread(depth_path1, cv2.IMREAD_GRAYSCALE) / 100
-    binary_mask_tensor = create_random_blobs(visualize=False)  # returns sparse tensor
-    xyz_list = create_stacked_xyz_tensor(depth_image).reshape(1, 3, -1).detach().cpu().numpy()
+    color_image1 = cv2.imread(image_path1)
+    color_image2 = cv2.imread(image_path2)
+    depth_image1 = cv2.imread(depth_path1, -1) / 10000
+    depth_image2 = cv2.imread(depth_path2, -1) / 10000
+
+    segmentation_parameters = SegmentationParameters(1024, conf=0.5, iou=0.9)
+    segmenter = SegmentationMatcher(segmentation_parameters=segmentation_parameters,
+                                    color_images=[color_image1, color_image2],
+                                    depth_images=[depth_image1, depth_image2], DEVICE=DEVICE,
+                                    min_dist=0.7, cutoff=3.5, ws_min=[-0.9, -1.5, -0.8], ws_max=[1.0, 1.5, 1.5])
+
+    color_image1, depth_image1, xyz_cropped = preprocessImage(color_image1, depth_image1, T_SC1,
+                                                              intrinsic=o3d_intrinsic1,
+                                                              min_bounds=segmenter.min_bound,
+                                                              max_bounds=segmenter.max_bound)
+
+    color_image2, depth_image2, xyz_cropped2 = preprocessImage(color_image2, depth_image2, T_SC2,
+                                                               intrinsic=o3d_intrinsic2,
+                                                               min_bounds=segmenter.min_bound,
+                                                               max_bounds=segmenter.max_bound)
+
+    segmenter.intrinsics = [o3d_intrinsic1, o3d_intrinsic2]
+    segmenter.transforms = [T_SC1, T_SC2]
+    # activate profiler
     profiler = cProfile.Profile()
     profiler.enable()
+    # start by image preprocessing
+    segmenter.get_image_mask()
+    # ICP align pointclouds
+    segmenter.generate_global_pointclouds(visualize=False)
+    print("aligning pointclouds ")
+    segmenter.get_icp_transform(visualize=False)
+    # segment images
+    # binary_mask_tensor = create_random_blobs(visualize=False)  # returns sparse tensor
+    binary_mask_tensor, binary_mask_tensor2 = segment_images([color_image1, color_image2], DEVICE, image_size=1024,
+                                                             confidence=0.5,
+                                                             iou=0.9)
+
     start = time.time()
-    for i in range(2):
-        pointclouds = create_pointcloud_tensor_from_color_and_depth(color_image, depth_image, binary_mask_tensor,
-                                                                    transform=np.eye(4, 4), workspace=workspace,
-                                                                    visualize=False)
-    profiler.disable()
+    pointclouds1 = create_pointcloud_tensor_from_color_and_depth(color_image1, depth_image1, binary_mask_tensor,
+                                                                 transform=T_SC1, workspace=segmenter.workspace,
+                                                                 intrinsic=o3d_intrinsic1,
+                                                                 visualize=False)
+
+    pointclouds2 = create_pointcloud_tensor_from_color_and_depth(color_image2, depth_image2, binary_mask_tensor2,
+                                                                 transform=T_SC2, workspace=segmenter.workspace,
+                                                                 intrinsic=o3d_intrinsic2,
+                                                                 visualize=False)
+
     elapsed_time = time.time() - start
     print("loop took ", elapsed_time, "seconds or ", elapsed_time / 2, " seconds per iteration")
 
-    # Print detailed profiling information
+    segmenter.pc_array_1 = pointclouds1
+    segmenter.pc_array_2 = pointclouds2
 
-    stats = pstats.Stats(profiler)
+    # TODO: We do not seem to have a nice overlap between pointclouds
+    # segmenter.transform_pointclouds_icp(visualize=False)
+    # visualize both pointclouds
+    if True:
+        pointclouds_total = []
+        for element in pointclouds1:
+            pointclouds_total.append(element)
+        for element in pointclouds2:
+            pointclouds_total.append(element)
+        o3d.visualization.draw_geometries(pointclouds_total)
+
+    correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.08, threshold=0.001)
+    # Here we get the "stitched" objects matched by both cameras
+    corresponding_pointclouds, matched_objects = segmenter.stitch_scene(correspondences, scores, visualize=False)
+    # get all unique pointclouds
+    pointclouds = segmenter.get_final_pointclouds()
+    bounding_boxes = []
+    for element in matched_objects:
+        element, _ = element.remove_statistical_outlier(25, 0.5)
+        bbox = element.get_minimal_oriented_bounding_box(robust=True)
+        bbox.color = (1, 0, 0)  # open3d RED
+        bounding_boxes.append(bbox)  # here bbox center is not 0 0 0
+
+    matched_objects.extend(bounding_boxes)
+    print(f"recognized and matched {len(bounding_boxes)} objects")
+    o3d.visualization.draw_geometries(matched_objects)
+
+    # Print detailed profiling information
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats('cumulative')
     stats.print_stats()
