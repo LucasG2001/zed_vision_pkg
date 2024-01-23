@@ -1,8 +1,8 @@
 import cv2
+from fastsam import FastSAM, FastSAMPrompt
 from segmentation_matching_helpers import *
 import time
 import torch
-from segmentation_utils.gpu_pointcloud_generation import create_pointcloud_tensor_from_color_and_depth
 
 
 class SegmentationParameters:
@@ -22,7 +22,7 @@ class SegmentationMatcher:
     Note that this Matcher works with tuples or lists of images, camera parameters and so on
     """
 
-    def __init__(self, segmentation_parameters, color_images, depth_images, min_dist=1.0, cutoff=2.0,
+    def __init__(self, segmentation_parameters, color_images, depth_images,
                  model_path='FastSAM-x.pt', DEVICE="gpu", depth_scale=1.0):
         # TODO: Initialize Images with something
         self.workspace_mask = None
@@ -38,8 +38,6 @@ class SegmentationMatcher:
                                      imgsz=self.seg_params.image_size, conf=self.seg_params.confidence,
                                      iou=self.seg_params.iou)
         self.prompt_process = FastSAMPrompt(self.color_images[0], self.results, device=DEVICE)
-        self.max_depth = cutoff  # truncation depth
-        self.min_dist = min_dist
         self.pc_array_1 = []
         self.pc_array_2 = []
         self.final_pc_array = []
@@ -51,8 +49,8 @@ class SegmentationMatcher:
         self.icp = o3d.pipelines.registration.RegistrationResult()
         self.icp.transformation = np.eye(4,4)
         # Define the workspace box
-        self.min_bound = np.array([-0.2, -0.6, -0.1])
-        self.max_bound = np.array([0.8, 0.6, 0.9])
+        self.min_bound = np.array([-0.2, -0.9, -0.1])
+        self.max_bound = np.array([1.0, 0.9, 0.9])
 
         # Create an axis-aligned bounding box
         self.workspace = o3d.geometry.AxisAlignedBoundingBox(self.min_bound, self.max_bound)
@@ -66,6 +64,9 @@ class SegmentationMatcher:
 
     def set_segmentation_model(self, model_path):
         self.nn_model = FastSAM(model_path)
+    
+    def set_segmentation_params(self, segmentation_params):
+        self.seg_params = segmentation_params
 
     def set_images(self, color_images, depth_images):
         """
@@ -83,27 +84,105 @@ class SegmentationMatcher:
         self.color_images = color_images
         self.depth_images = depth_images
 
-    def get_image_mask(self):
-        for i, (depth_image, color_image) in enumerate(zip(self.depth_images, self.color_images)):
-            max_mask = depth_image > self.max_depth
-            min_mask = depth_image < self.min_dist
-            depth_mask = np.logical_or(max_mask, min_mask)
-            self.workspace_mask = depth_mask
+    
+    def create_xu_yv_meshgrid(self, intrinsic, image_height=720, image_width=1280):
+        # Parameters for camera projection
+        cx = intrinsic.intrinsic_matrix[0, 2]
+        cy = intrinsic.intrinsic_matrix[1, 2]
+        fx = intrinsic.intrinsic_matrix[0, 0]
+        fy = intrinsic.intrinsic_matrix[1, 1]
+        # Create tensors for u and v coordinates
+        u = torch.arange(0, image_width).float().cuda().unsqueeze(0)
+        v = torch.arange(0, image_height).float().cuda().unsqueeze(1)
+        x_u = (u - cx) / fx
+        y_v = (v - cy) / fy
+        # print("Size of x_u (unscaled x):", x_u.size())
+        # print("Size of y_v (unscaled y):", y_v.size())
 
-    def preprocess_images(self, visualize=False):
-        for i, (depth_image, color_image) in enumerate(zip(self.depth_images, self.color_images)):
-            depth_image[
-                self.workspace_mask] = 0  # should make depth image black at these points -> non-valid pointcloud
-            # Set corresponding color image pixels to 0
-            color_image[np.stack([self.workspace_mask] * 3, axis=-1)] = 0
+        return x_u, y_v
+
+
+    def create_stacked_xyz_tensor(self, intrinsic, np_depth_image):
+        depth_tensor = torch.tensor(np_depth_image.copy(), device='cuda', dtype=torch.float32).cuda()
+        # Assuming you have an image of size 720x1280
+        image_height, image_width = 720, 1280
+        # Depth factor (adjust as needed)
+        depth_factor = 1.0
+        # Scale the depth tensor by the depth factor
+        z_tensor = depth_tensor * depth_factor
+        # print("Size of z_tensor:", z_tensor.size())
+        x_u, y_v = self.create_xu_yv_meshgrid(intrinsic, image_height, image_width)
+        # Broadcast and calculate the final x, y, and z coordinates
+        x_coordinates_final = x_u.unsqueeze(0).expand_as(z_tensor.unsqueeze(0)) * z_tensor
+        y_coordinates_final = y_v.unsqueeze(0).expand_as(z_tensor.unsqueeze(0)) * z_tensor
+        # print("Size of x_coordinates_final:", x_coordinates_final.size())
+        # print("Size of y_coordinates_final:", y_coordinates_final.size())
+        # Stack x, y, and z coordinates along the batch dimension
+        stacked_tensor = torch.cat([x_coordinates_final, y_coordinates_final, z_tensor.unsqueeze(0)], dim=0)
+        # print("Size of stacked_tensor:", stacked_tensor.size())
+        return stacked_tensor
+
+
+    def preprocessImages(self, visualize=False):
+        for i, (color_image, depth_image, transform, intrinsic) in enumerate(zip(self.color_images, self.depth_images, self.transforms, self.intrinsics)):
+            xyz_tensor = self.create_stacked_xyz_tensor(intrinsic, depth_image)
+            print("shape of xyz_tensor is ", xyz_tensor.shape)
+            xyz_tensor_np = xyz_tensor.detach().cpu().numpy()
+            xyz_homogenous = np.vstack((xyz_tensor_np, np.ones((1, xyz_tensor_np.shape[1], xyz_tensor.shape[2]))))
+            # Apply homogeneous transformation
+            xyz_transformed = np.matmul(transform, xyz_homogenous.reshape(4, -1)).reshape(xyz_homogenous.shape)[:3, :, :]
+            # Apply bounds check and mask
+            outside_bounds_mask = np.any((xyz_transformed < self.min_bound[:, np.newaxis, np.newaxis]) |
+                                         (xyz_transformed > self.max_bound[:, np.newaxis, np.newaxis]), axis=0)
+
+            # Set pixels to 0 in both the depth and color image where outside of bounds
+            xyz_transformed[:, outside_bounds_mask] = 0
+            depth_image[outside_bounds_mask] = 0
+            color_image[outside_bounds_mask] = 0
             if visualize:
-                cv2.imshow('masked color image', self.color_images[i])
+                cv2.imshow("cropped color image", color_image)
+                cv2.imshow("cropped depth image", depth_image)
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
 
-    def set_segmentation_params(self, segmentation_params):
-        self.seg_params = segmentation_params
+        return color_image, depth_image, xyz_transformed
+    
+    def segment_images(self, device, image_size=1024, confidence=0.6, iou=0.95, prompt=False):
+        segstart = time.time()
+        print("segmenting images and masking on gpu")
+        with torch.no_grad():
+            results = self.nn_model(self.color_images, device=device, retina_masks=True,
+                               imgsz=image_size, conf=confidence,
+                               iou=iou)
+            if prompt:
+                prompt_process = FastSAMPrompt("./output.jpg", results, device=self.DEVICE)
+                # text prompt
+                ann = prompt_process.text_prompt(text='laptop')
+                print("plotting rsult of text prompt")
+                prompt_process.plot(annotations=ann, output_path='output.jpg', )
 
+        print("Segmentation took, ", time.time() - segstart, " seconds")
+        mask_tensor1 = results[0].masks.data
+        mask_tensor2 = results[1].masks.data
+        print("shape of mask tensors is ", mask_tensor1.shape, " and ", mask_tensor2.shape)
+
+        return mask_tensor1, mask_tensor2
+    
+    def visualize_masked_tensor(self, color_image, binary_masks_tensor_gpu, height=720, width=1280):
+        binary_masks_cpu = binary_masks_tensor_gpu.detach().cpu().numpy().astype(np.uint8)
+
+        for i in range(binary_masks_cpu.shape[0]):
+            # Plot one of the masks using OpenCV
+            mask_to_plot = binary_masks_cpu[i]  # Change index to plot a different mask
+            # Create a grayscale image
+            image_to_plot = np.zeros((height, width), dtype=np.uint8)
+            color_image[mask_to_plot == 1, 0:3] = np.random.randint(0, 256, size=3)  # Set ones to white
+            # Display the image using OpenCV
+        cv2.imshow('Masked image ', color_image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+ 
     def generate_global_pointclouds(self, visualize=False):
         for i, (depth_image, color_image, intrinsic, transform) in enumerate(zip(self.depth_images, self.color_images,
                                                                                  self.intrinsics, self.transforms)):
@@ -131,10 +210,10 @@ class SegmentationMatcher:
             self.global_pointclouds[i], _ = self.global_pointclouds[i].remove_statistical_outlier(nb_neighbors=30,
                                                                                                   std_ratio=0.6)
 
-            if (visualize):
-                o3d.visualization.draw_geometries([self.global_pointclouds[0]])
-                o3d.visualization.draw_geometries([self.global_pointclouds[1]])
-                o3d.visualization.draw_geometries(self.global_pointclouds)
+        if (visualize):
+            o3d.visualization.draw_geometries([self.global_pointclouds[0]])
+            o3d.visualization.draw_geometries([self.global_pointclouds[1]])
+            o3d.visualization.draw_geometries(self.global_pointclouds)
 
     def transform_pointclouds_icp(self, visualize=False):
         # only transform first pc array, as it is target of first pointcloud w.r.t to the cameras and icp registration
@@ -148,14 +227,13 @@ class SegmentationMatcher:
                                                                        voxel_size=voxel_size,
                                                                        threshold=threshold)
         # delete matched objects from single-detection list
-        for index in sorted(indx1, reverse=True):
-            del self.pc_array_1[index]
-
-        for index in sorted(indx2, reverse=True):
-            del self.pc_array_2[index]
-
-        self.final_pc_array = self.pc_array_1
-        self.final_pc_array.extend(self.pc_array_2)
+        for i, element in enumerate(self.pc_array_1):
+            if i not in indx1:
+                self.final_pc_array.append(element)    
+        
+        for i, element in enumerate(self.pc_array_2):
+            if i not in indx1:
+                self.final_pc_array.append(element)
 
         print("length of corresponding pointclouds is ", len(correspondences))
         return correspondences, scores, indx1, indx2
@@ -179,13 +257,6 @@ class SegmentationMatcher:
 
         return corresponding_pointclouds, stitched_objects
 
-    def project_pointclouds_to_global(self, visualize=True):
-        for pc_array, transform in zip([self.pc_array_1, self.pc_array_2], self.transforms):
-            for pc in pc_array:
-                pc.transform(transform)
-                if visualize:
-                    o3d.visualization.draw_geometries([pc])
-        return self.pc_array_1, self.pc_array_2
 
     # TODO: make nice icp transform once and then leave it be
     def get_icp_transform(self, visualize=False):
@@ -217,167 +288,53 @@ class SegmentationMatcher:
         if visualize:
             o3d.visualization.draw_geometries([self.global_pointclouds[0], self.global_pointclouds[1]])
 
-    def segment_and_mask_images_gpu(self, visualize=True):
-        postprocessing = 0
-        pc_creating = 0
-        rgbd_creating = 0
-        self.pc_array_1.clear()
-        self.pc_array_2.clear()
-        point_cloud_arrays = [self.pc_array_1, self.pc_array_2]
-        start_time = time.time()
-        print("segmenting images and masking on gpu")
-        with torch.no_grad():
-            self.results = self.nn_model(self.color_images, device=self.device, retina_masks=True,
-                                         imgsz=self.seg_params.image_size, conf=self.seg_params.confidence,
-                                         iou=self.seg_params.iou)
+    def create_pointcloud_array(self, color_image, depth_image, masks_tensor, transform, intrinsic, visualize=False):
+        batch_size = masks_tensor.shape[0]
+        color_image_list = np.reshape(color_image, (-1, 3))
+        mask_list = masks_tensor.reshape(batch_size, 1, -1)
+        xyz_tensor = self.create_stacked_xyz_tensor(intrinsic, depth_image).reshape(1, 3, -1)
+        depth_tensor = xyz_tensor[:, 2, :]
+        xy_grid_np = xyz_tensor[:, 0:2, :].detach().cpu().numpy()
+        # mask only the depth tensor, all else would be redundant
+        masked_depth_image_list = depth_tensor.expand(batch_size, 1, -1) * mask_list
+        masked_depth_image_list = masked_depth_image_list[:, :, ::6]
+        # Need to subsample rest as well otherwise list-form indices do not correspond anymore
+        color_image_list = color_image_list[::6, :]
+        xy_grid_np = xy_grid_np[:, :, ::6]
+        pointclouds = []
+        masked_depth_image_list_np = masked_depth_image_list.detach().cpu().numpy()  # THIS IS THE BOTTLENECK!!!!
+        # Next problem here: This length is static!
+        for i in range(batch_size):
+            nonzero = np.nonzero(masked_depth_image_list_np[i, 0])  # number of nonzero pixels
+            # Loop over the batch dimension
+            coords = np.zeros((len(nonzero[0]), 3))
+            colors = np.zeros((len(nonzero[0]), 3))
+            coords[:, 0] = xy_grid_np[0, 0][nonzero]  # x coordinate (maybe we can batch extract this earlier?
+            coords[:, 1] = xy_grid_np[0, 1][nonzero]  # y coordinate
+            coords[:, 2] = masked_depth_image_list_np[i, 0][nonzero]  # z coordinate
+            # TODO: There is a mismatch between the color image size and the mask size, since it was massively downsampled
+            colors[:, 0] = color_image_list[:, 0][nonzero] / 255.0  # z coordinate
+            colors[:, 1] = color_image_list[:, 1][nonzero] / 255.0  # x coordinate
+            colors[:, 2] = color_image_list[:, 2][nonzero] / 255.0  # y coordinate
+            pointcloud = o3d.geometry.PointCloud()
+            pointcloud.points = o3d.utility.Vector3dVector(coords)
+            pointcloud.colors = o3d.utility.Vector3dVector(colors)
+            pointcloud.transform(transform)
+            # Crop points not contined in the relevant workspace
+            pointcloud = pointcloud.crop(self.workspace)
+            if len(pointcloud.points) > 10 and len(pointcloud.points) < 5000:
+                # print("total of ", len(pointcloud.points), " points")
+                pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
+                pointclouds.append(pointcloud)
 
-        print("Segmentation took, ", time.time() - start_time, " seconds")
-        mask_tensor1 = self.results[0].masks.data
-        mask_tensor2 = self.results[1].masks.data
-        mask_tensor1.to_sparse()
-        mask_tensor2.to_sparse()
-        # now we filter masks that are too big
-        # Calculate the sum along the 1280x720 dimensions for each mask
-        sum_mask1 = torch.sum(mask_tensor1, dim=(1, 2))
-        sum_mask2 = torch.sum(mask_tensor2, dim=(1, 2))
-        # Find indices of masks with sum >= 15000
-        indices_to_keep_mask1 = torch.nonzero(sum_mask1 < 15000).squeeze()
-        indices_to_keep_mask2 = torch.nonzero(sum_mask2 < 15000).squeeze()
-        # Filter masks based on indices
-        mask_tensor1 = mask_tensor1[indices_to_keep_mask1]
-        mask_tensor2 = mask_tensor2[indices_to_keep_mask2]
-        # Empty the GPU cache
-        # We have a Problem when running body tracking on three cameras the segmentation and postprocessing with the model all on gpu"
-        del sum_mask1, sum_mask2, indices_to_keep_mask1, indices_to_keep_mask2
-        torch.cuda.empty_cache()
-        print(f"shape of filtered mask tensors is {mask_tensor1.size()} and {mask_tensor2.size()} ")
-        # Convert NumPy arrays to PyTorch tensors and move to GPU
-        depth_tensor1 = torch.tensor(self.depth_images[0].copy(), device='cuda', dtype=torch.float32)
-        depth_tensor2 = torch.tensor(self.depth_images[1].copy(), device='cuda', dtype=torch.float32)
-        # print("creating masked depth tensors")
-        # Assuming mask_tensor is of size (n, 720, 180) and color_tensor1 is of size (1, 720, 1280, 3), x and y are inversed in opencv!
-        # Apply masks to depth image
-        masked_depth1 = depth_tensor1 * mask_tensor1
-        masked_depth2 = depth_tensor2 * mask_tensor2
-        # start transform to 3D
-        masks1 = masked_depth1.cpu().numpy()
-        masks2 = masked_depth2.cpu().numpy()
-        # Release depth tensors from memory
-        del mask_tensor1, mask_tensor2, masked_depth1, masked_depth2
-        # Empty the GPU cache
-        torch.cuda.empty_cache()
+        # Visualize the point clouds (optional)
 
-        # Global Pointcloud once should be enough
-        # u,v, depth -> points, then just select at indices
-        for i, (masked_depth_tensor, color_image, intrinsic, transform) in enumerate(
-                zip([masks1, masks2], self.color_images,
-                    self.intrinsics, self.transforms)):
-            cx = intrinsic.intrinsic_matrix[0, 2]
-            cy = intrinsic.intrinsic_matrix[1, 2]
-            fx = intrinsic.intrinsic_matrix[0, 0]
-            fy = intrinsic.intrinsic_matrix[1, 1]
-            for j in range(masked_depth_tensor.shape[0]):
-                start_time = time.time()
-                # filter relevant points in image
-                depth_image = masked_depth_tensor[j]
-                indices = np.where((depth_image) > 0)  # gives [row indices (y, v), columns indices (x, u)]
-                # local_color =  color_image[indices]
-                # intrinsics transformation
-                z = depth_image[indices] / self.depth_scale
-                x = (indices[1] - cx) * z / fx
-                y = (indices[0] - cy) * z / fy
-                # Combine x, y, z to form 3D points
-                points_3d = np.column_stack((x, y, z))
-                # point creation time
-                rgbd_time = time.time() - start_time
-                rgbd_creating += rgbd_time
-                # Pointcloud
-                pc = o3d.geometry.PointCloud()
-                pc.points = o3d.utility.Vector3dVector(points_3d)
-                # pc.colors = o3d.utility.Vector3dVector(local_color / 255.0)  # Normalize colors to the range [0, 1]
-                pc_creation_time = time.time() - rgbd_time - start_time
-                pc_creating += pc_creation_time
-                # Downsample
-                pc = pc.uniform_down_sample(every_k_points=3)
-                # NEW
-                pc.transform(self.transforms[i])
-                pc = pc.crop(self.workspace)
-
-                if len(pc.points) > 100:  # delete all pointclouds with less than 100 points
-                    pc, _ = pc.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
-                    point_cloud_arrays[i].append(pc)
-                    if (visualize):
-                        o3d.visualization.draw_geometries([pc], width=1280, height=720)
-                pc_postprocess_time = time.time() - pc_creation_time - rgbd_time - start_time
-                postprocessing += pc_postprocess_time
-
-            print("size of pc array is ", len(self.pc_array_1) + len(self.pc_array_2))
-
-        print("time for creating rgbd image is ", rgbd_creating)
-        print("creating pointcloud took ", pc_creating)
-        print("cleaning pointcloud took ", postprocessing)
+        print("length of pointclouds is ", len(pointclouds))
 
         if visualize:
-            self.prompt_process = FastSAMPrompt(self.color_images[0], self.results[0], device=self.device)
-            annotations1 = self.prompt_process._format_results(result=self.results[0], filter=0)
-            self.prompt_process.plot(annotations=annotations1, output_path=f'segmentation1.jpg')
-            self.prompt_process = FastSAMPrompt(self.color_images[1], self.results[1], device=self.device)
-            annotations2 = self.prompt_process._format_results(result=self.results[1], filter=0)
-            self.prompt_process.plot(annotations=annotations2, output_path=f'segmentation2.jpg')
-            o3d.visualization.draw_geometries(point_cloud_arrays[0], width=1280, height=720)
-            o3d.visualization.draw_geometries(point_cloud_arrays[1], width=1280, height=720)
+            self.visualize_masked_tensor(color_image, masks_tensor)
+            o3d.visualization.draw_geometries(pointclouds, width=1280, height=1280)
+            for pc in pointclouds:
+                 o3d.visualization.draw_geometries([pc])
 
-    def full_gpu_segment_and_mask(self, visualize=True):
-        self.pc_array_1.clear()
-        self.pc_array_2.clear()
-        point_cloud_arrays = [self.pc_array_1, self.pc_array_2]
-        start_time = time.time()
-        print("segmenting images and masking on gpu")
-        with torch.no_grad():
-            self.results = self.nn_model(self.color_images, device=self.device, retina_masks=True,
-                                         imgsz=self.seg_params.image_size, conf=self.seg_params.confidence,
-                                         iou=self.seg_params.iou)
-
-        print("Segmentation took, ", time.time() - start_time, " seconds")
-        mask_tensor1 = self.results[0].masks.data
-        mask_tensor2 = self.results[1].masks.data
-        mask_tensor1.to_sparse()
-        mask_tensor2.to_sparse()
-        # now we filter masks that are too big
-        # Calculate the sum along the 1280x720 dimensions for each mask
-        sum_mask1 = torch.sum(mask_tensor1, dim=(1, 2))
-        sum_mask2 = torch.sum(mask_tensor2, dim=(1, 2))
-        # Find indices of masks with sum >= 15000
-        indices_to_keep_mask1 = torch.nonzero(sum_mask1 < 15000).squeeze()
-        indices_to_keep_mask2 = torch.nonzero(sum_mask2 < 15000).squeeze()
-        # Filter masks based on indices
-        mask_tensor1 = mask_tensor1[indices_to_keep_mask1]
-        mask_tensor2 = mask_tensor2[indices_to_keep_mask2]
-        # Empty the GPU cache
-        # We have a Problem when running body tracking on three cameras the segmentation and postprocessing with the model all on gpu"
-        del sum_mask1, sum_mask2, indices_to_keep_mask1, indices_to_keep_mask2
-        torch.cuda.empty_cache()
-        print(f"shape of filtered mask tensors is {mask_tensor1.size()} and {mask_tensor2.size()} ")
-        # Convert NumPy arrays to PyTorch tensors and move to GPU
-        pc_start_time = time.time()
-        self.pc_array_1 = create_pointcloud_tensor_from_color_and_depth(color_image=self.color_images[0],
-                                                                        depth_image=self.depth_images[0],
-                                                                        masks_tensor=mask_tensor1, visualize=False)
-        self.pc_array_2 = create_pointcloud_tensor_from_color_and_depth(color_image=self.color_images[1],
-                                                                        depth_image=self.depth_images[1],
-                                                                        masks_tensor=mask_tensor2, visualize=False)
-        self.pc_array_1 = create_pointcloud_tensor_from_color_and_depth(self.color_images[0], depth_image=self.depth_images[0], masks_tensor=mask_tensor1,
-                                                                         transform=self.transforms[0], workspace=self.workspace, visualize=False)
-        self.pc_array_2 = create_pointcloud_tensor_from_color_and_depth(self.color_images[1], depth_image=self.depth_images[1], masks_tensor=mask_tensor2, 
-                                                                        transform=self.transforms[1], workspace=self.workspace, visualize=False)
-        pc_end_time = time.time()
-        print("creating pointcloud took ", pc_end_time - pc_start_time)
-        if visualize:
-            self.prompt_process = FastSAMPrompt(self.color_images[0], self.results[0], device=self.device)
-            annotations1 = self.prompt_process._format_results(result=self.results[0], filter=0)
-            self.prompt_process.plot(annotations=annotations1, output_path=f'segmentation1.jpg')
-            self.prompt_process = FastSAMPrompt(self.color_images[1], self.results[1], device=self.device)
-            annotations2 = self.prompt_process._format_results(result=self.results[1], filter=0)
-            self.prompt_process.plot(annotations=annotations2, output_path=f'segmentation2.jpg')
-            o3d.visualization.draw_geometries(point_cloud_arrays[0], width=1280, height=720)
-            o3d.visualization.draw_geometries(point_cloud_arrays[1], width=1280, height=720)
+        return pointclouds

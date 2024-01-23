@@ -4,12 +4,15 @@ import numpy as np
 import time
 import open3d as o3d
 import os
+import sys
+# setting path
+sys.path.append('./')
+print(os.getcwd())
 import cProfile
 import pstats
 from segmentation.fastsam import FastSAM, FastSAMPrompt
 from segmentation.segmentation_matcher import SegmentationMatcher
 from segmentation.segmentation_matcher import SegmentationParameters
-from bilateral_filter import apply_bilateral_filter, apply_aggressive_gaussian_filter, apply_aggressive_median_filter
 
 model_path = 'FastSAM-s.pt'
 nn_model = FastSAM(model_path)

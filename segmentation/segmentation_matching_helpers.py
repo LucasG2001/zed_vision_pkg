@@ -1,19 +1,6 @@
-from fastsam import FastSAM, FastSAMPrompt
+from fastsam import FastSAMPrompt
 import numpy as np
-import random
 import open3d as o3d
-from segmentation_utils.helper_functions import inverse_transform
-
-
-def crop_pointcloud(pc: o3d.geometry.PointCloud, max_depth):
-    points = np.asarray(pc.points)
-    bool_array = np.zeros(len(points), dtype=bool)
-    bool_array[points[:, 2] > max_depth] = True
-    points_cropped = np.delete(points, bool_array, axis=0)
-    cropped_pc = o3d.geometry.PointCloud()
-    cropped_pc.points = o3d.utility.Vector3dVector(points_cropped)
-
-    return cropped_pc
 
 
 def compute_3d_iou(point_cloud_1: o3d.geometry.PointCloud, point_cloud_2: o3d.geometry.PointCloud, voxel_size=0.02):
@@ -89,24 +76,6 @@ def segment_image(image_path, nn, imgsz=736, conf=0.5, iou=0.8, output_path="./o
     return mask_array, ids
 
 
-def pixel_to_global(pixel_coords, depth_values, focal_length, principal_point, rotation_matrix, translation_vector):
-    # Convert pixel coordinates to normalized camera coordinates
-    normalized_coords = np.zeros((pixel_coords.shape[0], 3))
-    normalized_coords[:, 0] = (pixel_coords[:, 1] - principal_point[0]) / focal_length
-    normalized_coords[:, 1] = (pixel_coords[:, 0] - principal_point[1]) / focal_length
-    normalized_coords[:, 2] = 1.0
-
-    # Transform normalized camera coordinates to camera coordinates
-    camera_coords = np.dot(np.linalg.inv(rotation_matrix), normalized_coords.T)
-
-    # Calculate global coordinates
-    global_coords = np.zeros((pixel_coords.shape[0], 3))
-    for i in range(pixel_coords.shape[0]):
-        global_coords[i] = (depth_values[i] / camera_coords[2, i]) * camera_coords[:, i] - translation_vector
-
-    return global_coords
-
-
 def match_segmentations2D(mask_array1, mask_array2, id1, id2):
     # Iterate over each segmentation in image1 and find corresponding in image2
     # Calculate intersection over union (IoU) for all pairs of labels
@@ -176,28 +145,4 @@ def project_point_clouds_to_global(pcd_arr, R, t, paint=None):
 
     return pcds, homogeneous_matrix
 
-def crop_images(color_image, depth_image, intrinsics, extrinsics, min_bounds, max_bounds):
-    # Step 1: Convert 3D Workspace Bounds to Camera Coordinates
-    min_bounds_cam = np.dot(inverse_transform(extrinsics), np.append(min_bounds, 1))
-    max_bounds_cam = np.dot(inverse_transform(extrinsics), np.append(max_bounds, 1))
-
-    # Step 2: Project 3D Coordinates to 2D Image Coordinates with Depth
-    min_bounds_projected = np.dot(intrinsics, min_bounds_cam[:3] / min_bounds_cam[2])
-    max_bounds_projected = np.dot(intrinsics, max_bounds_cam[:3] / max_bounds_cam[2])
-
-    # Step 3: Determine Cropping Bounds
-    x_min = int(min(min_bounds_projected[0], max_bounds_projected[0]))
-    x_max = int(max(min_bounds_projected[0], max_bounds_projected[0]))
-    y_min = int(min(min_bounds_projected[1], max_bounds_projected[1]))
-    y_max = int(max(min_bounds_projected[1], max_bounds_projected[1]))
-    print(f"image maxima are {x_min}, {x_max}, {y_min}, {y_max}")
-
-    # Step 4: Crop the Color Image
-    cropped_color_image = color_image[y_min:y_max, x_min:x_max, :]
-    cropped_depth_image = depth_image[y_min:y_max, x_min:x_max]
-
-    return cropped_color_image, cropped_depth_image
-
-# Example usage:
-# cropped_image = crop_image(color_image, depth_image, intrinsics_matrix, extrinsics_matrix, min_bounds, max_bounds)
 

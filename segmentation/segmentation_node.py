@@ -80,11 +80,9 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     print("starting loop")
     color_images = image_subscriber.get_images()[0]
     depth_images = image_subscriber.get_images()[1]
-    segmentation_parameters = SegmentationParameters(1024, conf=0.4, iou=0.9)
-    segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, min_dist=0.8, cutoff=1.9, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
+    segmentation_parameters = SegmentationParameters(1024, conf=0.5, iou=0.7)
+    segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
     segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
-     # Set up logging
-    iteration_times = []
     while not rospy.is_shutdown():
         print("looping")
         user_input = input("Enter 's' to segment the image. See the ZED-Ros node for a preview. Press 'x' to shut down. Press 'c' to clear scene ")
@@ -97,22 +95,32 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             depth_image1, depth_image2 = image_subscriber.get_images()[1]
             show_input_images(color_image1, color_image2, depth_image1, depth_image2, save=True, dir=script_directory)
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
-            #segmenter.generate_global_pointclouds(visualize=False)
-            #segmenter.get_icp_transform(visualize=False)
-            segmenter.get_image_mask()
-            segmenter.preprocess_images(visualize=True) 
-            # TEST!
-            iteration_no = 0
+            segmenter.generate_global_pointclouds(visualize=True)
+            segmenter.get_icp_transform(visualize=True)
+            segmenter.preprocessImages(visualize=True) 
             while(True):
+                segmenter.pc_array_1.clear()
+                segmenter.pc_array_2.clear()
+                segmenter.final_pc_array.clear()
                 start = time.time()
-                #mask_arrays = segmenter.segment_color_images(filter_masks=True, visualize=True)
-                segmenter.preprocess_images(visualize=False) 
-                segmenter.full_gpu_segment_and_mask(visualize=False)       
-                # segmenter.segment_and_mask_images_gpu(visualize=False)
-                print("Pointcloud generation at, ", time.time()-start, " seconds")
+                segmenter.preprocessImages(visualize=False) 
+                
+                binary_mask_tensor, binary_mask_tensor2 = segmenter.segment_images(DEVICE, image_size=1024, confidence=0.6, iou=0.7)
+
+                pc_start = time.time()
+                segmenter.pc_array_1 = segmenter.create_pointcloud_array(segmenter.color_images[0], segmenter.depth_images[0], binary_mask_tensor,
+                                                                 transform=segmenter.transforms[0],
+                                                                 intrinsic=segmenter.intrinsics[0],
+                                                                 visualize=False)
+
+                segmenter.pc_array_2 = segmenter.create_pointcloud_array(segmenter.color_images[1], segmenter.depth_images[1], binary_mask_tensor2,
+                                                                 transform=segmenter.transforms[1],
+                                                                 intrinsic=segmenter.intrinsics[1],
+                                                                 visualize=False)     
+                
+                print("Pointcloud generation took, ", time.time()-pc_start, " seconds")
                 segmenter.transform_pointclouds_icp(visualize=False)
-                print("Alignment at, ", time.time()-start, " seconds")
-                correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.04, threshold=0.05) 
+                correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.07, threshold=0.001) 
                 print("Corrrespondence match at, ", time.time()-start, " seconds")
                 # Here we get the "stitched" objects matched by both cameras
                 corresponding_pointclouds, matched_objects = segmenter.stitch_scene(correspondences, scores, visualize=False)
@@ -120,7 +128,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 print("final pointclouds at, ", time.time()-start, " seconds")
                 pointclouds = segmenter.get_final_pointclouds()
                 bounding_boxes = []
-                for element in matched_objects:
+                for element in pointclouds:
                     element, _ =  element.remove_statistical_outlier(25, 0.5)
                     bbox = element.get_minimal_oriented_bounding_box(robust=True)
                     bbox.color = (1, 0, 0)  # open3d RED
@@ -145,17 +153,13 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 """ 
                 # End of debug
                 transform_publisher.publish(transforms)
-                matched_objects.extend(bounding_boxes)
+                pointclouds.extend(bounding_boxes)
                 print(f"recognized and matched {len(bounding_boxes)} objects")
                 #print("visualizing detected planning scene")
                 # Visualize
-                #o3d.visualization.draw_geometries(matched_objects)
+                o3d.visualization.draw_geometries(pointclouds)
                 print("Everything took, ", time.time()-start, " seconds")
 
-                
-                # with open(current_dir + '/segmentation_log.txt', 'a') as file:
-                #     file.write(f"Iteration {iteration_no} - Segmentation Time: {time.time()-start} seconds\n")
-                # iteration_no += 1 
 
         if user_input.lower() == 'c':
             empty_scene = PlanningScene()
