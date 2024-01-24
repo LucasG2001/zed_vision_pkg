@@ -157,7 +157,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 print(f"recognized and matched {len(bounding_boxes)} objects")
                 #print("visualizing detected planning scene")
                 # Visualize
-                o3d.visualization.draw_geometries(pointclouds)
+                # o3d.visualization.draw_geometries(pointclouds)
                 print("Everything took, ", time.time()-start, " seconds")
 
 
