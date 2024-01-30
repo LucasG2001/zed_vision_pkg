@@ -5,15 +5,27 @@ from geometry_msgs.msg import Point
 import pandas as pd
 import numpy as np
 import os
+from custom_msgs.msg import HandPose
+
 
 # Create /hand_data folder if it doesn't exist
 folder_path = 'hand_data'
 os.makedirs(folder_path, exist_ok=True)
 
+# Create container class for HOlolens
+class HololensHand:
+    def __init__(self):
+      self.position = None
+      self.orientation = None
+      self.isTracked = False
+      self.isUpdated = True
+
+
 class HandAveragerNode:
     def __init__(self):
         rospy.init_node('hand_averager_node', anonymous=True)
-
+        
+        self.hololens_hand = HololensHand()
         self.camera_list = ["32689769", "38580376", "34783283"]
 
         # Publisher
@@ -28,6 +40,8 @@ class HandAveragerNode:
         for i in range(1, 4):
             rospy.Subscriber(f'/left_hand{self.camera_list[i-1]}', Point, self.left_point_callback, callback_args=f'cam{i}')
             rospy.Subscriber(f'/right_hand{self.camera_list[i-1]}', Point, self.right_point_callback, callback_args=f'cam{i}')
+        # create subscriber for hololens
+        rospy.Subscriber('hl_hand_pose', HandPose, self.hololens_callback)
 
     def left_point_callback(self, data: Point(), cam):
         self.left_hand_points[cam] = data
@@ -36,6 +50,13 @@ class HandAveragerNode:
     def right_point_callback(self, data: Point(), cam):
         self.right_hand_points[cam] = data
         #print(f"got message {data} on right hand from camera {cam}")
+    
+    # TODO: Integrate HOlolens in Hand Pose
+    def hololens_callback(self, msg: HandPose):
+        self.hololens_hand.position = msg.position
+        self.hololens_hand.orientation = msg.orientation
+        self.hololens_hand.isTracked = msg.isTracked
+        self.hololens_hand.isUpdated = msg.isUpdated
         
 
     def calculate_and_publish_average(self, n_bodies):
@@ -63,9 +84,20 @@ class HandAveragerNode:
             print("_______________________________")
             i += 1
 
-        right_avg.x /= num_points
-        right_avg.y /= num_points
-        right_avg.z /= num_points
+        # add hololens tracking for right hand
+        if self.hololens_hand.isTracked:
+            right_avg.x += self.hololens_hand.position.x
+            right_avg.y += self.hololens_hand.position.y
+            right_avg.z += self.hololens_hand.position.z
+
+            right_avg.x /= num_points + 1
+            right_avg.y /= num_points + 1
+            right_avg.z /= num_points + 1
+
+        else:
+            right_avg.x /= num_points
+            right_avg.y /= num_points
+            right_avg.z /= num_points
 
         left_avg.x /= num_points
         left_avg.y /= num_points
