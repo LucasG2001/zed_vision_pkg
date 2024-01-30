@@ -99,6 +99,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             segmenter.get_icp_transform(visualize=True)
             segmenter.preprocessImages(visualize=True) 
             while(True):
+                segmenter.color_images, segmenter.depth_images = image_subscriber.get_images()
                 segmenter.pc_array_1.clear()
                 segmenter.pc_array_2.clear()
                 segmenter.final_pc_array.clear()
