@@ -2,14 +2,15 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+folder_path = os.path.dirname(os.path.abspath(__file__))
 
 if __name__ == '__main__':
     print("plotting")
 
-    folder_path = 'hand_data'
-    left_hand_df = pd.read_csv(os.path.join(folder_path, 'left_hand_data.csv'), index_col=0)
-    right_hand_df = pd.read_csv(os.path.join(folder_path, 'right_hand_data.csv'), index_col=0)
+    
+    left_hand_df = pd.read_csv(os.path.join(folder_path, 'left_hand_data.csv'))
+    right_hand_df = pd.read_csv(os.path.join(folder_path, 'right_hand_data.csv'))
+
 
     # Plot left hand data
     plt.figure(figsize=(12, 6))
@@ -19,6 +20,7 @@ if __name__ == '__main__':
     plt.plot(left_hand_df.index, left_hand_df['z'], label='z')
     plt.title('Left Hand Data vs Time')
     plt.xlabel('Time')
+    plt.xlim([1000, 2000])
     plt.ylabel('Coordinate Value')
     plt.legend()
 
@@ -29,6 +31,7 @@ if __name__ == '__main__':
     plt.plot(right_hand_df.index, right_hand_df['z'], label='z')
     plt.title('Right Hand Data vs Time')
     plt.xlabel('Time')
+    plt.xlim([1000, 2000])
     plt.ylabel('Coordinate Value')
     plt.legend()
 

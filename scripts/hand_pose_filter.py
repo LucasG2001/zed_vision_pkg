@@ -10,6 +10,9 @@ from custom_msgs.msg import HandPose
 
 # Create /hand_data folder if it doesn't exist
 folder_path = 'hand_data'
+# Get the parent directory of the currently executed script
+script_directory = os.path.dirname(os.path.abspath(__file__))
+print(script_directory)
 os.makedirs(folder_path, exist_ok=True)
 
 # Create container class for HOlolens
@@ -25,6 +28,10 @@ class HandAveragerNode:
     def __init__(self):
         rospy.init_node('hand_averager_node', anonymous=True)
         
+        # filter parameter
+        self.filter_param = 0.1
+        # TODO: filter not on callback reception but at the end - else causes massiv ealisasing at 30 HZ publishing
+        # frequency of bodytracking nodes
         self.hololens_hand = HololensHand()
         self.camera_list = ["32689769", "38580376", "34783283"]
 
@@ -44,11 +51,18 @@ class HandAveragerNode:
         rospy.Subscriber('hl_hand_pose', HandPose, self.hololens_callback)
 
     def left_point_callback(self, data: Point(), cam):
-        self.left_hand_points[cam] = data
-        #print(f"got message {data} on left hand from camera {cam}")
+        # add filetring with EMA
+        self.left_hand_points[cam].x = self.filter_param * data.x + (1-self.filter_param) * self.left_hand_points[cam].x
+        self.left_hand_points[cam].y = self.filter_param * data.y + (1-self.filter_param) * self.left_hand_points[cam].y
+        self.left_hand_points[cam].z = self.filter_param * data.z + (1-self.filter_param) * self.left_hand_points[cam].z
+
+        print(f"got message {data} on left hand from camera {cam}")
 
     def right_point_callback(self, data: Point(), cam):
-        self.right_hand_points[cam] = data
+        # add filetring with EMA
+        self.right_hand_points[cam].x = self.filter_param * data.x + (1-self.filter_param) * self.right_hand_points[cam].x
+        self.right_hand_points[cam].y = self.filter_param * data.y + (1-self.filter_param) * self.right_hand_points[cam].y
+        self.right_hand_points[cam].z = self.filter_param * data.z + (1-self.filter_param) * self.right_hand_points[cam].z
         #print(f"got message {data} on right hand from camera {cam}")
     
     # TODO: Integrate HOlolens in Hand Pose
@@ -63,12 +77,15 @@ class HandAveragerNode:
         # Calculate the average point for the specified hand
         left_avg = Point()
         right_avg = Point()
+       
         num_points = n_bodies
         
         # handle special case
         if n_bodies == 0:
             print("no bodies were detected yet")
-            return 
+            left = np.array([0, 0, 0])
+            right = np.array([0, 0, 0])
+            return left, right
         
         i= 0
         for (key1,left_point), (key2, right_point) in zip(self.left_hand_points.items(), self.right_hand_points.items()):
@@ -106,6 +123,9 @@ class HandAveragerNode:
         # Publish the average point for the specified hand
         self.left_hand_pub.publish(left_avg)
         self.right_hand_pub.publish(right_avg)
+        # arrays for logging
+        left = np.array([left_avg.x, left_avg.y, left_avg.z])
+        right = np.array([right_avg.x, right_avg.y, right_avg.z])
         
         print(f"right hand is at {right_avg}")
         print(" ")
@@ -114,35 +134,45 @@ class HandAveragerNode:
         print(f"no points is {num_points}")
         print("___________________________________")
 
+        return left, right
+
 
 if __name__ == '__main__':
     try:
         hand_node = HandAveragerNode()
-        rate = rospy.Rate(15)
-        print("established hand pose node")
-        #initialize data for logging
-        #right_hand_timeseries = np.empty((0,3))
-        #left_hand_timeseries = np.empty((0,3))
-        # initialize detected bodies 
+        rate = rospy.Rate(200)
+        print("Established hand pose node")
+
+        # Initialize data for logging
+        right_hand_timeseries = np.empty((0, 3))
+        left_hand_timeseries = np.empty((0, 3))
+
+        # Initialize detected bodies
         detected_bodies = [0, 0, 0]  # initialize parameter
         rospy.set_param('detected_body_list', detected_bodies)
+
+        # Create CSV files if they don't exist
+        left_csv_path = os.path.join(script_directory, 'left_hand_data.csv')
+        right_csv_path = os.path.join(script_directory, 'right_hand_data.csv')
+        print(left_csv_path)
+
+        
+        pd.DataFrame(columns=['x', 'y', 'z']).to_csv(left_csv_path, index=False)
+
+        if not os.path.isfile(right_csv_path):
+            pd.DataFrame(columns=['x', 'y', 'z']).to_csv(right_csv_path, index=False)
+
         while not rospy.is_shutdown():
             detected_bodies = rospy.get_param('detected_body_list')
             nr_bodies = np.sum(np.array(detected_bodies))
-            hand_node.calculate_and_publish_average(nr_bodies)
-            #hand_node.right_hand_points.clear()
-            #hand_node.left_hand_points.clear()
-            # print(hand_node.right_hand_points)
-            #right_hand_timeseries = np.vstack((right_hand_timeseries, right_hand))        
-            #left_hand_timeseries = np.vstack((left_hand_timeseries, left_hand))
+            if nr_bodies == 0:
+                continue
+            left_hand, right_hand = hand_node.calculate_and_publish_average(nr_bodies)
+
+            # Append new values to CSV files
+            pd.DataFrame([left_hand], columns=['x', 'y', 'z']).to_csv(left_csv_path, mode='a', header=not os.path.isfile(left_csv_path), index=False)
+            pd.DataFrame([right_hand], columns=['x', 'y', 'z']).to_csv(right_csv_path, mode='a', header=not os.path.isfile(right_csv_path), index=False)
             rate.sleep()
-        # create dataframe for plotting
-        # TODO: Create Logging that actually works, the problem is that upon shutdown this code is not executed anymore
-        #right_hand_df = pd.DataFrame(right_hand_timeseries, columns=['x', 'y', 'z'])
-        #left_hand_df = pd.DataFrame(left_hand_timeseries, columns=['x', 'y', 'z'])
-        ## Save DataFrames to CSV files
-        #left_hand_df.to_csv(os.path.join(folder_path, 'left_hand_data.csv'))
-        #right_hand_df.to_csv(os.path.join(folder_path, 'right_hand_data.csv'))
 
     except rospy.ROSInterruptException:
         pass
