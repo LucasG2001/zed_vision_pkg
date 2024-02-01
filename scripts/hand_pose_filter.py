@@ -29,7 +29,7 @@ class HandAveragerNode:
         rospy.init_node('hand_averager_node', anonymous=True)
         
         # filter parameter
-        self.filter_param = 0.1
+        self.filter_param = 0.05
         # TODO: filter not on callback reception but at the end - else causes massiv ealisasing at 30 HZ publishing
         # frequency of bodytracking nodes
         self.hololens_hand = HololensHand()
@@ -43,6 +43,10 @@ class HandAveragerNode:
         self.left_hand_points = {'cam1': Point(), 'cam2': Point(), 'cam3': Point()}
         self.right_hand_points = {'cam1': Point(), 'cam2': Point(), 'cam3': Point()}
 
+        #Variable to stor filtered avg data
+        self.avg_left_filtered = np.array([0, 0, 0])
+        self.avg_right_filtered = np.array([0, 0, 0])
+
         # Subscribers
         for i in range(1, 4):
             rospy.Subscriber(f'/left_hand{self.camera_list[i-1]}', Point, self.left_point_callback, callback_args=f'cam{i}')
@@ -52,17 +56,17 @@ class HandAveragerNode:
 
     def left_point_callback(self, data: Point(), cam):
         # add filetring with EMA
-        self.left_hand_points[cam].x = self.filter_param * data.x + (1-self.filter_param) * self.left_hand_points[cam].x
-        self.left_hand_points[cam].y = self.filter_param * data.y + (1-self.filter_param) * self.left_hand_points[cam].y
-        self.left_hand_points[cam].z = self.filter_param * data.z + (1-self.filter_param) * self.left_hand_points[cam].z
+        self.left_hand_points[cam].x = data.x 
+        self.left_hand_points[cam].y = data.y 
+        self.left_hand_points[cam].z = data.z 
 
         print(f"got message {data} on left hand from camera {cam}")
 
     def right_point_callback(self, data: Point(), cam):
         # add filetring with EMA
-        self.right_hand_points[cam].x = self.filter_param * data.x + (1-self.filter_param) * self.right_hand_points[cam].x
-        self.right_hand_points[cam].y = self.filter_param * data.y + (1-self.filter_param) * self.right_hand_points[cam].y
-        self.right_hand_points[cam].z = self.filter_param * data.z + (1-self.filter_param) * self.right_hand_points[cam].z
+        self.right_hand_points[cam].x = data.x 
+        self.right_hand_points[cam].y = data.y
+        self.right_hand_points[cam].z =  data.z
         #print(f"got message {data} on right hand from camera {cam}")
     
     # TODO: Integrate HOlolens in Hand Pose
@@ -119,13 +123,23 @@ class HandAveragerNode:
         left_avg.x /= num_points
         left_avg.y /= num_points
         left_avg.z /= num_points
+        
+        # arrays for logging and other operations
+        left = np.array([left_avg.x, left_avg.y, left_avg.z])
+        right = np.array([right_avg.x, right_avg.y, right_avg.z])
+
+        self.avg_left_filtered = filter_param * left + (1-filter_param) * self.left_avg_filtered
+        self.avg_right_filtered = filter_param * right + (1-filter_param) * self.avg_right_filtered
+        left_avg.x = self.avg_left_filtered[0]
+        left_avg.y = self.avg_left_filtered[1]
+        left_avg.z = self.avg_left_filtered[2]
+        right_avg.x = self.avg_left_filtered[0]
+        right_avg.y = self.avg_left_filtered[1]
+        right_avg.z = self.avg_left_filtered[2]
 
         # Publish the average point for the specified hand
         self.left_hand_pub.publish(left_avg)
         self.right_hand_pub.publish(right_avg)
-        # arrays for logging
-        left = np.array([left_avg.x, left_avg.y, left_avg.z])
-        right = np.array([right_avg.x, right_avg.y, right_avg.z])
         
         print(f"right hand is at {right_avg}")
         print(" ")
@@ -140,7 +154,7 @@ class HandAveragerNode:
 if __name__ == '__main__':
     try:
         hand_node = HandAveragerNode()
-        rate = rospy.Rate(200)
+        rate = rospy.Rate(350)
         print("Established hand pose node")
 
         # Initialize data for logging
