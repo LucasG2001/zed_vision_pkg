@@ -106,7 +106,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 start = time.time()
                 segmenter.preprocessImages(visualize=False) 
                 
-                binary_mask_tensor, binary_mask_tensor2 = segmenter.segment_images(DEVICE, image_size=1024, confidence=0.6, iou=0.7)
+                binary_mask_tensor, binary_mask_tensor2 = segmenter.segment_images(DEVICE, image_size=1024, confidence=0.55, iou=0.7)
 
                 pc_start = time.time()
                 segmenter.pc_array_1 = segmenter.create_pointcloud_array(segmenter.color_images[0], segmenter.depth_images[0], binary_mask_tensor,
@@ -121,43 +121,30 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 
                 print("Pointcloud generation took, ", time.time()-pc_start, " seconds")
                 segmenter.transform_pointclouds_icp(visualize=False)
-                correspondences, scores, _, _ = segmenter.match_segmentations(voxel_size=0.07, threshold=0.001) 
+
+                segmenter.final_pc_array.clear()
+                correspondences, scores = segmenter.match_segmentations(voxel_size=0.15, threshold=0.001) 
                 print("Corrrespondence match at, ", time.time()-start, " seconds")
-                # Here we get the "stitched" objects matched by both cameras
-                corresponding_pointclouds, matched_objects = segmenter.stitch_scene(correspondences, scores, visualize=False)
-                # get all unique pointclouds
+                # Here we get the "stitched" objects matched by both cameras. In final_pc_array ALL objects (single-cam detected and matched) are saved
+                matched_objects = segmenter.stitch_scene(correspondences, scores, visualize=False)
                 print("final pointclouds at, ", time.time()-start, " seconds")
                 pointclouds = segmenter.get_final_pointclouds()
-                bounding_boxes = []
-                for element in pointclouds:
-                    element, _ =  element.remove_statistical_outlier(25, 0.5)
-                    bbox = element.get_minimal_oriented_bounding_box(robust=True)
-                    bbox.color = (1, 0, 0)  # open3d RED
-                    bounding_boxes.append(bbox) # here bbox center is not 0 0 0
-                
+                bounding_boxes = segmenter.final_bboxes
                 print("Bounding boxes created at, ", time.time()-start, " seconds")
 
                 #ToDo: publish objects to planning scene10
                 collision_objects, force_field_planning_scene, transforms = create_planning_scene_object_from_bbox(bounding_boxes)
-                for object in collision_objects:
-                    scene_publisher.publish(object)
-                    rospy.sleep(0.001)
-                #print("published object to the planning scene")
-                
+                segmenter.final_bboxes.clear()
+                # for object in collision_objects:
+                #     scene_publisher.publish(object)
+                #     rospy.sleep(0.001)
                 # transform axis aligned bboxes and corrresponding ee-transforms to the force field planner
                 force_field_publisher.publish(force_field_planning_scene)
-                #For debug
-                """
-                for object in force_field_planning_scene.collision_objects:
-                    scene_publisher.publish(object)
-                    rospy.sleep(0.05)
-                """ 
-                # End of debug
                 transform_publisher.publish(transforms)
-                pointclouds.extend(bounding_boxes)
                 print(f"recognized and matched {len(bounding_boxes)} objects")
                 #print("visualizing detected planning scene")
                 # Visualize
+                # pointclouds.extend(bounding_boxes)
                 # o3d.visualization.draw_geometries(pointclouds)
                 print("Everything took, ", time.time()-start, " seconds")
 

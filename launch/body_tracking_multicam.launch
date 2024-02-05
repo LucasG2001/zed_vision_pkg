@@ -26,7 +26,7 @@
         <param name="camera_number" value="2" />
     </node>
    
-
+    <!--
     <node pkg="zed_vision" type="body_tracking_multicam.py" name="body_tracking_node_3" output="screen">
         <param name="yaml_file" value="$(arg yaml_file)" />
         <param name="transform_name" value="H3" />
@@ -34,7 +34,7 @@
         <param name="visualize" value="" />
         <param name="camera_number" value="3" />
     </node>
-    
+    -->
     
 
     <!-- Launch the hand averaging node -->

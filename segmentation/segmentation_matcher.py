@@ -41,6 +41,7 @@ class SegmentationMatcher:
         self.pc_array_1 = []
         self.pc_array_2 = []
         self.final_pc_array = []
+        self.final_bboxes = []
         self.device = DEVICE
         self.nn_model.to(self.device)
         self.depth_scale = depth_scale
@@ -49,8 +50,8 @@ class SegmentationMatcher:
         self.icp = o3d.pipelines.registration.RegistrationResult()
         self.icp.transformation = np.eye(4,4)
         # Define the workspace box
-        self.min_bound = np.array([-0.2, -0.9, -0.1])
-        self.max_bound = np.array([1.0, 0.9, 0.9])
+        self.min_bound = np.array([-0.2, -0.7, -0.1])
+        self.max_bound = np.array([0.8, 0.7, 0.5])
 
         # Create an axis-aligned bounding box
         self.workspace = o3d.geometry.AxisAlignedBoundingBox(self.min_bound, self.max_bound)
@@ -229,33 +230,45 @@ class SegmentationMatcher:
         # delete matched objects from single-detection list
         for i, element in enumerate(self.pc_array_1):
             if i not in indx1:
+                element, _ =  element.remove_statistical_outlier(25, 0.5)
                 self.final_pc_array.append(element)    
+                bbox = element.get_minimal_oriented_bounding_box(robust=True)
+                bbox.color = (1, 0, 0)  # open3d RED
+                self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
         
         for i, element in enumerate(self.pc_array_2):
-            if i not in indx1:
-                self.final_pc_array.append(element)
-
+            if i not in indx2:
+                element, _ =  element.remove_statistical_outlier(25, 0.5)
+                self.final_pc_array.append(element)    
+                bbox = element.get_minimal_oriented_bounding_box(robust=True)
+                bbox.color = (1, 0, 0)  # open3d RED
+                self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
+        # self.final_bboxes is filled with bboxes of all non-matched objects        
+        # Here final pc array is filled with all non-matched objects
+        # correspondences is  filled with matched pointclouds
         print("length of corresponding pointclouds is ", len(correspondences))
-        return correspondences, scores, indx1, indx2
+        return correspondences, scores
 
     def stitch_scene(self, correspondences, scores, visualize=False):
-        # ToDo: (Here or in other function) -> take correspondences and create single pointcloud
-        #  out of them for ROS publishing
         corresponding_pointclouds = []
         stitched_objects = []
-
         for pc_tuple, iou in zip(correspondences, scores):
-            # transform point cloud 1 onto point cloud 2
-            corresponding_pointclouds.append(pc_tuple)
             # We use the open3d convienience operator "+" to combine two pointclouds
-            stitched_objects.append((pc_tuple[0] + pc_tuple[1]))
+            stitched_pc = pc_tuple[0] + pc_tuple[1]
+            stitched_pc, _ =  stitched_pc.remove_statistical_outlier(25, 0.5)
+            stitched_objects.append(stitched_pc)
+            # Now add BBBOXes for matched objects as well   
+            bbox = stitched_pc.get_minimal_oriented_bounding_box(robust=True)
+            bbox.color = (1, 0, 0)  # open3d RED
+            self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
 
         self.final_pc_array.extend(stitched_objects)
+        # Now self.final_pc_array includes all matched elements and nonmatched elements that were detected
         if visualize:
             o3d.visualization.draw_geometries([self.global_pointclouds[0], self.global_pointclouds[1]])
             o3d.visualization.draw_geometries(stitched_objects)
 
-        return corresponding_pointclouds, stitched_objects
+        return stitched_objects
 
 
     # TODO: make nice icp transform once and then leave it be

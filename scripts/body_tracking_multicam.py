@@ -24,6 +24,7 @@
    modelised skeleton in an OpenGL window
 """
 import sys
+import time
 import os
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -175,7 +176,7 @@ if __name__ == "__main__":
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
-    body_runtime_param.detection_confidence_threshold = 0.4 #confidence threshold actually doesnt work
+    body_runtime_param.detection_confidence_threshold = 0.9 #confidence threshold actually doesnt work
     #TODO @ Accenture: Does your confidence threshold actually work?
    
 
@@ -206,6 +207,8 @@ if __name__ == "__main__":
 
     print(f"detection loop is running on camera {camera_number}")
     while zed.grab() == sl.ERROR_CODE.SUCCESS:
+        if camera_number == 1:
+            start = time.time()
         detected_bodies = rospy.get_param('detected_body_list')
         # Gab an image
         # Retrieve left image
@@ -224,9 +227,10 @@ if __name__ == "__main__":
         depth_image_pub.publish(depth_img_msg)
 
         detected_body_list.clear()
+        
         confidences.clear()
         for i, candidate in enumerate(bodies.body_list):
-            if candidate.confidence > 60:
+            if candidate.confidence > 75:
                 detected_body_list.append(candidate)
                 confidences.append(candidate.confidence)
 
@@ -258,23 +262,27 @@ if __name__ == "__main__":
         right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
         left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
         ####
-        left_hand_msg.x = left_wrist_transformed[0] - 0.0 #static offset coming out of nowhere
-        left_hand_msg.y = left_wrist_transformed[1] - 0.0
-        left_hand_msg.z = left_wrist_transformed[2] - 0.0
-        right_hand_msg.x = right_wrist_transformed[0] - 0.0 #static offst coming out of nowhere
-        right_hand_msg.y = right_wrist_transformed[1] - 0.0
-        right_hand_msg.z = right_wrist_transformed[2] - 0.0
+        left_hand_msg.x = left_wrist_transformed[0]   
+        left_hand_msg.y = left_wrist_transformed[1]     
+        left_hand_msg.z = left_wrist_transformed[2]     
+        right_hand_msg.x = right_wrist_transformed[0]    
+        right_hand_msg.y = right_wrist_transformed[1]
+        right_hand_msg.z = right_wrist_transformed[2]
         # publish positions of the two hands
         left_hand_publisher.publish(left_hand_msg)
         right_hand_publisher.publish(right_hand_msg)
 
-        if(False):
+        end = time.time()
+        if camera_number == 1:
+            print(f"iteration took {end-start}")
+
+        if(camera_number==2):
             cv_viewer.render_2D(image_left_ocv, image_scale, detected_body_list, body_param.enable_tracking,
                                 body_param.body_format)
             cv2.imshow("ZED | 2D View", image_left_ocv)
             #print("confidence is ", detected_body_list[0].confidence)
             # print("lenght of detecetd bodies is ", len(detected_body_list))
-        key = cv2.waitKey(10) & 0xFF
+        key = cv2.waitKey(2) & 0xFF
         if key == ord('q'):
             break
         

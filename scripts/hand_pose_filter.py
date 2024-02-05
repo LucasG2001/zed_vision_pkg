@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import os
 from custom_msgs.msg import HandPose
+import time
 
 
 # Create /hand_data folder if it doesn't exist
@@ -29,26 +30,33 @@ class HandAveragerNode:
         rospy.init_node('hand_averager_node', anonymous=True)
         
         # filter parameter
-        self.filter_param = 0.05
+        self.filter_param = 0.9999
         # TODO: filter not on callback reception but at the end - else causes massiv ealisasing at 30 HZ publishing
         # frequency of bodytracking nodes
         self.hololens_hand = HololensHand()
-        self.camera_list = ["32689769", "38580376", "34783283"]
+        self.camera_list = ["32689769", "38580376"]
 
         # Publisher
         self.left_hand_pub = rospy.Publisher('cartesian_impedance_controller/left_hand', Point, queue_size=1)
         self.right_hand_pub = rospy.Publisher('cartesian_impedance_controller/right_hand', Point, queue_size=1)
 
         # Variables to store received points
-        self.left_hand_points = {'cam1': Point(), 'cam2': Point(), 'cam3': Point()}
-        self.right_hand_points = {'cam1': Point(), 'cam2': Point(), 'cam3': Point()}
+        self.left_hand_points = {'cam1': Point(), 'cam2': Point()}
+        self.right_hand_points = {'cam1': Point(), 'cam2': Point()}
+        
+        self.vleft = np.array([0, 0, 0])
+        self.vright = np.array([0, 0, 0])
+        self.right_estimate = np.array([0, 0, 0])
+        self.left_estimate = np.array([0, 0, 0])
+        self.frequency = 350
+        self.dt = 1.0/self.frequency
 
         #Variable to stor filtered avg data
-        self.avg_left_filtered = np.array([0, 0, 0])
-        self.avg_right_filtered = np.array([0, 0, 0])
+        self.last_left = np.array([0, 0, 0])
+        self.last_right = np.array([0, 0, 0])
 
         # Subscribers
-        for i in range(1, 4):
+        for i in range(1, 2):
             rospy.Subscriber(f'/left_hand{self.camera_list[i-1]}', Point, self.left_point_callback, callback_args=f'cam{i}')
             rospy.Subscriber(f'/right_hand{self.camera_list[i-1]}', Point, self.right_point_callback, callback_args=f'cam{i}')
         # create subscriber for hololens
@@ -81,7 +89,12 @@ class HandAveragerNode:
         # Calculate the average point for the specified hand
         left_avg = Point()
         right_avg = Point()
-       
+        left_avg.x = 0.0
+        left_avg.y = 0.0
+        left_avg.z = 0.0
+        right_avg.x  = 0.0
+        right_avg.y  = 0.0
+        right_avg.z  = 0.0
         num_points = n_bodies
         
         # handle special case
@@ -123,19 +136,27 @@ class HandAveragerNode:
         left_avg.x /= num_points
         left_avg.y /= num_points
         left_avg.z /= num_points
-        
+        # Here we have final average from measurement
+        # now we add velocity
         # arrays for logging and other operations
         left = np.array([left_avg.x, left_avg.y, left_avg.z])
         right = np.array([right_avg.x, right_avg.y, right_avg.z])
 
-        self.avg_left_filtered = filter_param * left + (1-filter_param) * self.left_avg_filtered
-        self.avg_right_filtered = filter_param * right + (1-filter_param) * self.avg_right_filtered
-        left_avg.x = self.avg_left_filtered[0]
-        left_avg.y = self.avg_left_filtered[1]
-        left_avg.z = self.avg_left_filtered[2]
-        right_avg.x = self.avg_left_filtered[0]
-        right_avg.y = self.avg_left_filtered[1]
-        right_avg.z = self.avg_left_filtered[2]
+        self.vleft = (left - self.last_left) / self.dt
+        self.vright = (right -self.last_right) / self.dt
+
+        left_avg.x =  0.01 * left[0] + 0.99* self.left_estimate
+        left_avg.y =  0.01 * left[1] + 0.99* self.left_estimate
+        left_avg.z =  0.01 * left[2] + 0.99* self.left_estimate
+        right_avg.x = 0.01 * right[0] + 0.99 * self.right_estimate
+        right_avg.y = 0.01 * right[1] + 0.99 * self.right_estimate
+        right_avg.z = 0.01 * right[2] + 0.99 * self.right_estimate
+
+        self.last_left = 0.01 * left + 0.99 * self.left_estimate
+        self.last_right = 0.01 * right + 0.99 * self.right_estimate
+
+        self.left_estimate = left + self.vleft * self.dt
+        self.right_estimate = right + self.vright * self.dt
 
         # Publish the average point for the specified hand
         self.left_hand_pub.publish(left_avg)
@@ -148,13 +169,13 @@ class HandAveragerNode:
         print(f"no points is {num_points}")
         print("___________________________________")
 
-        return left, right
+        return self.last_left, self.last_right
 
 
 if __name__ == '__main__':
     try:
         hand_node = HandAveragerNode()
-        rate = rospy.Rate(350)
+        rate = rospy.Rate(hand_node.frequency)
         print("Established hand pose node")
 
         # Initialize data for logging
@@ -172,20 +193,21 @@ if __name__ == '__main__':
 
         
         pd.DataFrame(columns=['x', 'y', 'z']).to_csv(left_csv_path, index=False)
-
-        if not os.path.isfile(right_csv_path):
-            pd.DataFrame(columns=['x', 'y', 'z']).to_csv(right_csv_path, index=False)
+        pd.DataFrame(columns=['x', 'y', 'z']).to_csv(right_csv_path, index=False)
 
         while not rospy.is_shutdown():
+            start = time.time()
             detected_bodies = rospy.get_param('detected_body_list')
             nr_bodies = np.sum(np.array(detected_bodies))
             if nr_bodies == 0:
                 continue
             left_hand, right_hand = hand_node.calculate_and_publish_average(nr_bodies)
-
+            print(hand_node.vright)
+            #print(f"loop without csv print took {time.time()-start}") # takes about 0.001 s
             # Append new values to CSV files
             pd.DataFrame([left_hand], columns=['x', 'y', 'z']).to_csv(left_csv_path, mode='a', header=not os.path.isfile(left_csv_path), index=False)
             pd.DataFrame([right_hand], columns=['x', 'y', 'z']).to_csv(right_csv_path, mode='a', header=not os.path.isfile(right_csv_path), index=False)
+            #print(f"loop took {time.time()-start}") # takes about 0.003 seconds up to here
             rate.sleep()
 
     except rospy.ROSInterruptException:
