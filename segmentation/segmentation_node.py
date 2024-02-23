@@ -80,7 +80,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     print("starting loop")
     color_images = image_subscriber.get_images()[0]
     depth_images = image_subscriber.get_images()[1]
-    segmentation_parameters = SegmentationParameters(1024, conf=0.5, iou=0.7)
+    segmentation_parameters = SegmentationParameters(1024, conf=0.65, iou=0.7)
     segmenter = SegmentationMatcher(segmentation_parameters, color_images, depth_images, model_path='FastSAM-s.pt', DEVICE=DEVICE, depth_scale=1.0)
     segmenter.set_camera_params([o3d_intrinsic1, o3d_intrinsic2], [H1, H2])
     while not rospy.is_shutdown():
@@ -99,14 +99,25 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             segmenter.get_icp_transform(visualize=True)
             segmenter.preprocessImages(visualize=True) 
             while(True):
-                segmenter.color_images, segmenter.depth_images = image_subscriber.get_images()
+                start = time.time()
+
+                color_image1, color_image2 = image_subscriber.get_images()[0]   
+                depth_image1, depth_image2 = image_subscriber.get_images()[1]
+                segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
+                print(f"setting images took {time.time()- start}")
+
+                preprocess_start = time.time()
+                segmenter.preprocessImages(visualize=False) 
+                print(f"preprocessing images took {time.time()- preprocess_start}")
+
                 segmenter.pc_array_1.clear()
                 segmenter.pc_array_2.clear()
                 segmenter.final_pc_array.clear()
-                start = time.time()
-                segmenter.preprocessImages(visualize=False) 
+                segmenter.final_bboxes.clear()
                 
-                binary_mask_tensor, binary_mask_tensor2 = segmenter.segment_images(DEVICE, image_size=1024, confidence=0.55, iou=0.7)
+    
+                
+                binary_mask_tensor, binary_mask_tensor2 = segmenter.segment_images(DEVICE, image_size=1024, confidence=0.6, iou=0.9)
 
                 pc_start = time.time()
                 segmenter.pc_array_1 = segmenter.create_pointcloud_array(segmenter.color_images[0], segmenter.depth_images[0], binary_mask_tensor,
@@ -120,30 +131,34 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                                                                  visualize=False)     
                 
                 print("Pointcloud generation took, ", time.time()-pc_start, " seconds")
-                segmenter.transform_pointclouds_icp(visualize=False)
 
-                segmenter.final_pc_array.clear()
-                correspondences, scores = segmenter.match_segmentations(voxel_size=0.15, threshold=0.001) 
+                transform_start = time.time()
+                segmenter.transform_pointclouds_icp(visualize=False)
+                print("transform took ", time.time()-transform_start)
+
+                correspondences, scores = segmenter.match_segmentations(voxel_size=0.06, threshold=0.001) 
                 print("Corrrespondence match at, ", time.time()-start, " seconds")
                 # Here we get the "stitched" objects matched by both cameras. In final_pc_array ALL objects (single-cam detected and matched) are saved
                 matched_objects = segmenter.stitch_scene(correspondences, scores, visualize=False)
+
+
                 print("final pointclouds at, ", time.time()-start, " seconds")
                 pointclouds = segmenter.get_final_pointclouds()
-                bounding_boxes = segmenter.final_bboxes
+                bounding_boxes = segmenter.get_final_bboxes()
                 print("Bounding boxes created at, ", time.time()-start, " seconds")
 
-                #ToDo: publish objects to planning scene10
-                collision_objects, force_field_planning_scene, transforms = create_planning_scene_object_from_bbox(bounding_boxes)
-                segmenter.final_bboxes.clear()
-                # for object in collision_objects:
-                #     scene_publisher.publish(object)
-                #     rospy.sleep(0.001)
-                # transform axis aligned bboxes and corrresponding ee-transforms to the force field planner
+                #publish planning scene
+                collision_objects, planner_planning_scene, force_field_planning_scene, transforms = create_planning_scene_object_from_bbox(bounding_boxes)
+                
+                moveit_planning_scene_publisher.publish(planner_planning_scene)
+                #for object in collision_objects:
+                #    scene_publisher.publish(object)
+                #    rospy.sleep(0.0001)
+                #transform axis aligned bboxes and corrresponding ee-transforms to the force field planner
                 force_field_publisher.publish(force_field_planning_scene)
                 transform_publisher.publish(transforms)
-                print(f"recognized and matched {len(bounding_boxes)} objects")
-                #print("visualizing detected planning scene")
-                # Visualize
+                # print(f"recognized and matched {len(bounding_boxes)} objects")
+                # print("visualizing detected planning scene")
                 # pointclouds.extend(bounding_boxes)
                 # o3d.visualization.draw_geometries(pointclouds)
                 print("Everything took, ", time.time()-start, " seconds")

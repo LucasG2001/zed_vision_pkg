@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 
 import rospy
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, Pose
 import pandas as pd
 import numpy as np
 import os
 from custom_msgs.msg import HandPose
 import time
+import math
 
 
 # Create /hand_data folder if it doesn't exist
@@ -34,11 +35,11 @@ class HandAveragerNode:
         # TODO: filter not on callback reception but at the end - else causes massiv ealisasing at 30 HZ publishing
         # frequency of bodytracking nodes
         self.hololens_hand = HololensHand()
-        self.camera_list = ["32689769", "38580376"]
+        self.camera_list = ["32689769", "34783283"]
 
         # Publisher
-        self.left_hand_pub = rospy.Publisher('cartesian_impedance_controller/left_hand', Point, queue_size=1)
-        self.right_hand_pub = rospy.Publisher('cartesian_impedance_controller/right_hand', Point, queue_size=1)
+        self.left_hand_pub = rospy.Publisher('cartesian_impedance_controller/left_hand', Pose, queue_size=1)
+        self.right_hand_pub = rospy.Publisher('cartesian_impedance_controller/right_hand', Pose, queue_size=1)
 
         # Variables to store received points
         self.left_hand_points = {'cam1': Point(), 'cam2': Point()}
@@ -48,7 +49,7 @@ class HandAveragerNode:
         self.vright = np.array([0, 0, 0])
         self.right_estimate = np.array([0, 0, 0])
         self.left_estimate = np.array([0, 0, 0])
-        self.frequency = 350
+        self.frequency = 80
         self.dt = 1.0/self.frequency
 
         #Variable to stor filtered avg data
@@ -56,25 +57,27 @@ class HandAveragerNode:
         self.last_right = np.array([0, 0, 0])
 
         # Subscribers
-        for i in range(1, 2):
+        for i in range(1, 3):
             rospy.Subscriber(f'/left_hand{self.camera_list[i-1]}', Point, self.left_point_callback, callback_args=f'cam{i}')
             rospy.Subscriber(f'/right_hand{self.camera_list[i-1]}', Point, self.right_point_callback, callback_args=f'cam{i}')
         # create subscriber for hololens
-        rospy.Subscriber('hl_hand_pose', HandPose, self.hololens_callback)
+        rospy.Subscriber('/hl_hand_pose', HandPose, self.hololens_callback)
 
-    def left_point_callback(self, data: Point(), cam):
+    def left_point_callback(self, data: Point, cam):
         # add filetring with EMA
-        self.left_hand_points[cam].x = data.x 
-        self.left_hand_points[cam].y = data.y 
-        self.left_hand_points[cam].z = data.z 
+        if not (math.isnan(data.x)):
+            self.left_hand_points[cam].x = data.x 
+            self.left_hand_points[cam].y = data.y 
+            self.left_hand_points[cam].z = data.z 
 
         print(f"got message {data} on left hand from camera {cam}")
 
-    def right_point_callback(self, data: Point(), cam):
+    def right_point_callback(self, data: Point, cam):
         # add filetring with EMA
-        self.right_hand_points[cam].x = data.x 
-        self.right_hand_points[cam].y = data.y
-        self.right_hand_points[cam].z =  data.z
+        if not (math.isnan(data.x)):
+            self.right_hand_points[cam].x = data.x 
+            self.right_hand_points[cam].y = data.y
+            self.right_hand_points[cam].z =  data.z
         #print(f"got message {data} on right hand from camera {cam}")
     
     # TODO: Integrate HOlolens in Hand Pose
@@ -83,18 +86,29 @@ class HandAveragerNode:
         self.hololens_hand.orientation = msg.orientation
         self.hololens_hand.isTracked = msg.isTracked
         self.hololens_hand.isUpdated = msg.isUpdated
+        print("received hololens message")
         
 
     def calculate_and_publish_average(self, n_bodies):
         # Calculate the average point for the specified hand
-        left_avg = Point()
-        right_avg = Point()
-        left_avg.x = 0.0
-        left_avg.y = 0.0
-        left_avg.z = 0.0
-        right_avg.x  = 0.0
-        right_avg.y  = 0.0
-        right_avg.z  = 0.0
+        left_avg = Pose()
+        right_avg = Pose()
+        left_avg.position.x = 0.0
+        left_avg.position.y = 0.0
+        left_avg.position.z = 0.0
+        left_avg.orientation.x = 1.0
+        left_avg.orientation.y = 0.0
+        left_avg.orientation.z = 0.0
+        left_avg.orientation.w = 0.0
+
+        right_avg.position.x  = 0.0
+        right_avg.position.y  = 0.0
+        right_avg.position.z  = 0.0
+        right_avg.orientation.x = 1.0
+        right_avg.orientation.y = 0.0
+        right_avg.orientation.z = 0.0
+        right_avg.orientation.w = 0.0
+
         num_points = n_bodies
         
         # handle special case
@@ -106,13 +120,13 @@ class HandAveragerNode:
         
         i= 0
         for (key1,left_point), (key2, right_point) in zip(self.left_hand_points.items(), self.right_hand_points.items()):
-            left_avg.x += left_point.x
-            left_avg.y += left_point.y
-            left_avg.z += left_point.z
+            left_avg.position.x += left_point.x
+            left_avg.position.y += left_point.y
+            left_avg.position.z += left_point.z
 
-            right_avg.x += right_point.x
-            right_avg.y += right_point.y
-            right_avg.z += right_point.z
+            right_avg.position.x += right_point.x
+            right_avg.position.y += right_point.y
+            right_avg.position.z += right_point.z
 
             print(f"left hand of camera {i} at {left_point}")
             print("_______________________________")
@@ -120,40 +134,45 @@ class HandAveragerNode:
 
         # add hololens tracking for right hand
         if self.hololens_hand.isTracked:
-            right_avg.x += self.hololens_hand.position.x
-            right_avg.y += self.hololens_hand.position.y
-            right_avg.z += self.hololens_hand.position.z
+            right_avg.position.x += self.hololens_hand.position.x
+            right_avg.position.y += self.hololens_hand.position.y
+            right_avg.position.z += self.hololens_hand.position.z
 
-            right_avg.x /= num_points + 1
-            right_avg.y /= num_points + 1
-            right_avg.z /= num_points + 1
+            right_avg.position.x /= (num_points + 1)
+            right_avg.position.y /= (num_points + 1)
+            right_avg.position.z /= (num_points + 1)
+
+            right_avg.orientation = self.hololens_hand.orientation
+            print(f"right average orientation is{right_avg.orientation.x, right_avg.orientation.y, right_avg.orientation.z, right_avg.orientation.w}")
 
         else:
-            right_avg.x /= num_points
-            right_avg.y /= num_points
-            right_avg.z /= num_points
+            right_avg.position.x /= num_points
+            right_avg.position.y /= num_points
+            right_avg.position.z /= num_points
 
-        left_avg.x /= num_points
-        left_avg.y /= num_points
-        left_avg.z /= num_points
+        left_avg.position.x /= num_points
+        left_avg.position.y /= num_points
+        left_avg.position.z /= num_points
         # Here we have final average from measurement
         # now we add velocity
         # arrays for logging and other operations
-        left = np.array([left_avg.x, left_avg.y, left_avg.z])
-        right = np.array([right_avg.x, right_avg.y, right_avg.z])
+        left = np.array([left_avg.position.x, left_avg.position.y, left_avg.position.z])
+        right = np.array([right_avg.position.x, right_avg.position.y, right_avg.position.z])
 
-        self.vleft = (left - self.last_left) / self.dt
-        self.vright = (right -self.last_right) / self.dt
+        kalman_gain = 0.3
 
-        left_avg.x =  0.01 * left[0] + 0.99* self.left_estimate
-        left_avg.y =  0.01 * left[1] + 0.99* self.left_estimate
-        left_avg.z =  0.01 * left[2] + 0.99* self.left_estimate
-        right_avg.x = 0.01 * right[0] + 0.99 * self.right_estimate
-        right_avg.y = 0.01 * right[1] + 0.99 * self.right_estimate
-        right_avg.z = 0.01 * right[2] + 0.99 * self.right_estimate
+        self.vleft = self.vleft * 0.9 + 0.1 * (left - self.last_left) / self.dt
+        self.vright = self.vright * 0.9 + 0.1 * (right -self.last_right) / self.dt
 
-        self.last_left = 0.01 * left + 0.99 * self.left_estimate
-        self.last_right = 0.01 * right + 0.99 * self.right_estimate
+        left_avg.position.x =  (1-kalman_gain) * left[0] + kalman_gain * self.left_estimate[0]
+        left_avg.position.y =  (1-kalman_gain) * left[1] + kalman_gain * self.left_estimate[1]
+        left_avg.position.z =  (1-kalman_gain) * left[2] + kalman_gain * self.left_estimate[2]
+        right_avg.position.x = (1-kalman_gain) * right[0] + kalman_gain * self.right_estimate[0]
+        right_avg.position.y = (1-kalman_gain) * right[1] + kalman_gain * self.right_estimate[1]
+        right_avg.position.z = (1-kalman_gain) * right[2] + kalman_gain * self.right_estimate[2]
+
+        self.last_left = (1 - kalman_gain) * left + kalman_gain * self.left_estimate
+        self.last_right = (1 - kalman_gain) * right + kalman_gain * self.right_estimate
 
         self.left_estimate = left + self.vleft * self.dt
         self.right_estimate = right + self.vright * self.dt

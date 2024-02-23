@@ -7,6 +7,7 @@ folder_path = os.path.dirname(os.path.abspath(__file__))
 if __name__ == '__main__':
     print("plotting")
 
+    alpha = 0.1
     # Read data
     left_hand_df = pd.read_csv(os.path.join(folder_path, 'left_hand_data.csv'))
     right_hand_df = pd.read_csv(os.path.join(folder_path, 'right_hand_data.csv'))
@@ -17,14 +18,14 @@ if __name__ == '__main__':
         return data.ewm(alpha=alpha, adjust=False).mean()
 
     # Calculate EMA for left hand data
-    left_hand_df['x_ema'] = calculate_ema(left_hand_df['x'], alpha=0.01)
-    left_hand_df['y_ema'] = calculate_ema(left_hand_df['y'], alpha=0.01)
-    left_hand_df['z_ema'] = calculate_ema(left_hand_df['z'], alpha=0.01)
+    left_hand_df['x_ema'] = calculate_ema(left_hand_df['x'], alpha=alpha)
+    left_hand_df['y_ema'] = calculate_ema(left_hand_df['y'], alpha=alpha)
+    left_hand_df['z_ema'] = calculate_ema(left_hand_df['z'], alpha=alpha)
 
     # Calculate EMA for right hand data
-    right_hand_df['x_ema'] = calculate_ema(right_hand_df['x'], alpha=0.01)
-    right_hand_df['y_ema'] = calculate_ema(right_hand_df['y'], alpha=0.01)
-    right_hand_df['z_ema'] = calculate_ema(right_hand_df['z'], alpha=0.01)
+    right_hand_df['x_ema'] = calculate_ema(right_hand_df['x'], alpha=alpha)
+    right_hand_df['y_ema'] = calculate_ema(right_hand_df['y'], alpha=alpha)
+    right_hand_df['z_ema'] = calculate_ema(right_hand_df['z'], alpha=alpha)
 
     # Plot original and EMA-filtered left hand data
     plt.figure(figsize=(18, 6))

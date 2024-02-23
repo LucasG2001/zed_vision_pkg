@@ -1,10 +1,6 @@
 #!/usr/bin/python3
 ########################################################################
 #
-# Copyright (c) 2022, STEREOLABS.
-#
-# All rights reserved.
-#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 # "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 # LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -17,12 +13,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-########################################################################
+#######################################################################
 
-"""
-   This sample shows how to detect a human bodies and draw their 
-   modelised skeleton in an OpenGL window
-"""
 import sys
 import time
 import os
@@ -68,9 +60,16 @@ def get_hand_keypoints(body):
 
     for i in range(30, 37, 2):
         keypoint_left = np.array(body.keypoint[i]).reshape([1, 3])
-        keypoint_right = np.array(body.keypoint[i + 1]).reshape([1, 3])  # loops from 50 to 70 (69 is last)
+        keypoint_right = np.array(body.keypoint[i + 1]).reshape([1, 3])  
         np.vstack((left_hand_matrix, keypoint_left))  # left hand
-        np.vstack((right_hand_matrix, keypoint_right))  # left hand
+        np.vstack((right_hand_matrix, keypoint_right))  # right hand
+    
+    # add middle finger again two times to shift hand position to the middle
+    for i in range (2):
+        keypoint_left = np.array(body.keypoint[34]).reshape([1, 3])
+        keypoint_right = np.array(body.keypoint[35]).reshape([1, 3])  
+        np.vstack((left_hand_matrix, keypoint_left))  # left hand
+        np.vstack((right_hand_matrix, keypoint_right))  # right hand
 
     left_hand_pos = np.mean(left_hand_matrix, axis=0)
     right_hand_pos = np.mean(right_hand_matrix, axis=0)
@@ -164,21 +163,23 @@ if __name__ == "__main__":
     positional_tracking_parameters = sl.PositionalTrackingParameters()
     # If the camera is static, uncomment the following line to have better performances
     # positional_tracking_parameters.set_as_static = True
+    # If the camera is static, uncomment the following line to have better performances
+    positional_tracking_parameters.set_as_static = True
     zed.enable_positional_tracking(positional_tracking_parameters)
 
     body_param = sl.BodyTrackingParameters()
     body_param.enable_tracking = True  # Track people across images flow
     body_param.enable_body_fitting = True  # Smooth skeleton move
-    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_ACCURATE
+    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_FAST
     body_param.body_format = sl.BODY_FORMAT.BODY_38  # Choose the BODY_FORMAT you wish to use
-
     # Enable Object Detection module
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
-    body_runtime_param.detection_confidence_threshold = 0.9 #confidence threshold actually doesnt work
+    body_runtime_param.detection_confidence_threshold = 70 #confidence threshold actually doesnt work
     #TODO @ Accenture: Does your confidence threshold actually work?
-   
+
+    
 
     # Get ZED camera information
     camera_info = zed.get_camera_information()
@@ -226,28 +227,36 @@ if __name__ == "__main__":
         color_image_pub.publish(color_img_msg)
         depth_image_pub.publish(depth_img_msg)
 
-        detected_body_list.clear()
-        
-        confidences.clear()
-        for i, candidate in enumerate(bodies.body_list):
-            if candidate.confidence > 75:
-                detected_body_list.append(candidate)
-                confidences.append(candidate.confidence)
+        positions = []
+        confidences = []
+        detected_body_list = []
 
-        if len(confidences) > 0: # ==> len(detected_body_list) > 0
-            max_value = max(confidences)
-            max_confidence_index = confidences.index(max_value)
-            element = detected_body_list[max_confidence_index]
-            detected_body_list = [element]
+        print("body lenght befor deletion is ", len(bodies.body_list))
+
+        # filter bodies by confidence
+        for element in bodies.body_list:
+            if element.confidence > 70:
+                detected_body_list.append(element)
+                confidences.append(element.confidence)
+                positions.append(np.linalg.norm(element.position))
+
+        if len(detected_body_list) > 0:
+            trackIndex = positions.index(min(positions)) # track body that is nearest to robot base$
+            # TODO: track body that is nearest to EE
+            tracked_body = detected_body_list[trackIndex]
             detected_bodies[camera_number -1] = True # set a 1 if this camera has detected a body
             rospy.set_param('detected_body_list', detected_bodies)
+
+            # if tracked_body.mask.is_init():
+            #     body_mask = tracked_body.mask.get_data()
+
         else:
-            detected_bodies[camera_number -1] = False # set a 0 if this camera has detected a body
+            detected_bodies[camera_number -1] = False # set a 0 if this camera has not detected a body
             rospy.set_param('detected_body_list', detected_bodies)
-            left_hand_msg.x = 0.0 #static offset coming out of nowhere
+            left_hand_msg.x = 0.0 
             left_hand_msg.y = 0.0
             left_hand_msg.z = 0.0
-            right_hand_msg.x = 0.0 #static offset coming out of nowhere
+            right_hand_msg.x = 0.0
             right_hand_msg.y = 0.0
             right_hand_msg.z = 0.0
             # publish positions of the two hands
@@ -256,8 +265,7 @@ if __name__ == "__main__":
             continue # do not publish rest of messages an do not viusalize -> "stutter" stems from this
         
         # update only if not nan, else use last value
-        _, left_wrist = get_hand_keypoints(detected_body_list[0])
-        right_wrist, _ = get_hand_keypoints(detected_body_list[0])
+        right_wrist, left_wrist = get_hand_keypoints(tracked_body)
         # transform hand position to base frame
         right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
         left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
@@ -272,17 +280,22 @@ if __name__ == "__main__":
         left_hand_publisher.publish(left_hand_msg)
         right_hand_publisher.publish(right_hand_msg)
 
-        end = time.time()
-        if camera_number == 1:
-            print(f"iteration took {end-start}")
+        end = time.time()           
+        # if camera_number == 1:
+            #print(f"iteration took {end-start}")
 
-        if(camera_number==2):
-            cv_viewer.render_2D(image_left_ocv, image_scale, detected_body_list, body_param.enable_tracking,
+        if(camera_number==1):
+            cv_viewer.render_2D(image_left_ocv, image_scale, [tracked_body], body_param.enable_tracking,
                                 body_param.body_format)
             cv2.imshow("ZED | 2D View", image_left_ocv)
-            #print("confidence is ", detected_body_list[0].confidence)
-            # print("lenght of detecetd bodies is ", len(detected_body_list))
-        key = cv2.waitKey(2) & 0xFF
+        # if(camera_number==2):
+        #     cv_viewer.render_2D(image_left_ocv, image_scale, [tracked_body], body_param.enable_tracking,
+        #                         body_param.body_format)
+        #     cv2.imshow("ZED | 2D View", image_left_ocv)
+            # cv2.imshow("Body Mask | 2D View", body_mask)
+            # print("confidence is ", tracked_body.confidence)
+            # print("lenght of detecetd bodies is ", len(bodies.body_list))
+        key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
         

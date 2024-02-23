@@ -50,14 +50,24 @@ class SegmentationMatcher:
         self.icp = o3d.pipelines.registration.RegistrationResult()
         self.icp.transformation = np.eye(4,4)
         # Define the workspace box
-        self.min_bound = np.array([-0.2, -0.7, -0.1])
-        self.max_bound = np.array([0.8, 0.7, 0.5])
+        self.min_bound = np.array([0.09, -0.6, -0.05])
+        self.max_bound = np.array([0.9, 0.6, 0.45])
 
         # Create an axis-aligned bounding box
         self.workspace = o3d.geometry.AxisAlignedBoundingBox(self.min_bound, self.max_bound)
 
     def get_final_pointclouds(self):
         return self.final_pc_array
+    
+    def get_final_bboxes(self):
+        for element in self.final_pc_array:
+            #bbox = element.get_minimal_oriented_bounding_box(robust=True)
+            bbox = element.get_oriented_bounding_box()
+            # bbox = element.get_axis_aligned_bounding_box()
+            bbox.color = (1, 0, 0)  # open3d RED
+            if (bbox.volume() <= 0.2 * 0.2 * 0.2):
+                self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
+        return self.final_bboxes
 
     def set_camera_params(self, intrinsics, transforms):
         self.intrinsics = intrinsics
@@ -137,16 +147,17 @@ class SegmentationMatcher:
                                          (xyz_transformed > self.max_bound[:, np.newaxis, np.newaxis]), axis=0)
 
             # Set pixels to 0 in both the depth and color image where outside of bounds
+            # TODO: for some reason this does not blacken th eimage at all
             xyz_transformed[:, outside_bounds_mask] = 0
-            depth_image[outside_bounds_mask] = 0
-            color_image[outside_bounds_mask] = 0
+            self.depth_images[i][outside_bounds_mask] = 0
+            self.color_images[i][outside_bounds_mask] = 0
             if visualize:
                 cv2.imshow("cropped color image", color_image)
                 cv2.imshow("cropped depth image", depth_image)
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
 
-        return color_image, depth_image, xyz_transformed
+        # return color_image, depth_image, xyz_transformed
     
     def segment_images(self, device, image_size=1024, confidence=0.6, iou=0.95, prompt=False):
         segstart = time.time()
@@ -207,7 +218,12 @@ class SegmentationMatcher:
             self.global_pointclouds[i].colors = o3d.utility.Vector3dVector(color_image.reshape(-1, 3) / 255.0)
             self.global_pointclouds[i].uniform_down_sample(every_k_points=7)
             self.global_pointclouds[i].transform(transform)
-            self.global_pointclouds[i] = self.global_pointclouds[i].crop(self.workspace)
+            # crop pointcloud to region a bit bigger than workspace
+            min_bound = np.array([-0.1, -1.5, -0.4])
+            max_bound = np.array([1.5, 1.5, 0.9])
+            # Create an axis-aligned bounding box
+            cropspace = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
+            self.global_pointclouds[i] = self.global_pointclouds[i].crop(cropspace)
             self.global_pointclouds[i], _ = self.global_pointclouds[i].remove_statistical_outlier(nb_neighbors=30,
                                                                                                   std_ratio=0.6)
 
@@ -224,43 +240,33 @@ class SegmentationMatcher:
                 o3d.visualization.draw_geometries([pc])
 
     def match_segmentations(self, voxel_size=0.05, threshold=0.0):
+        start = time.time()
         correspondences, scores, indx1, indx2 = match_segmentations_3d(self.pc_array_1, self.pc_array_2,
                                                                        voxel_size=voxel_size,
                                                                        threshold=threshold)
+        
+        print(f'matching took {time.time()-start} seconds')
         # delete matched objects from single-detection list
         for i, element in enumerate(self.pc_array_1):
             if i not in indx1:
-                element, _ =  element.remove_statistical_outlier(25, 0.5)
+                # element, _ =  element.remove_statistical_outlier(25, 0.5)
                 self.final_pc_array.append(element)    
-                bbox = element.get_minimal_oriented_bounding_box(robust=True)
-                bbox.color = (1, 0, 0)  # open3d RED
-                self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
         
         for i, element in enumerate(self.pc_array_2):
             if i not in indx2:
-                element, _ =  element.remove_statistical_outlier(25, 0.5)
+                # element, _ =  element.remove_statistical_outlier(25, 0.5)
                 self.final_pc_array.append(element)    
-                bbox = element.get_minimal_oriented_bounding_box(robust=True)
-                bbox.color = (1, 0, 0)  # open3d RED
-                self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
-        # self.final_bboxes is filled with bboxes of all non-matched objects        
-        # Here final pc array is filled with all non-matched objects
-        # correspondences is  filled with matched pointclouds
         print("length of corresponding pointclouds is ", len(correspondences))
         return correspondences, scores
 
     def stitch_scene(self, correspondences, scores, visualize=False):
-        corresponding_pointclouds = []
         stitched_objects = []
         for pc_tuple, iou in zip(correspondences, scores):
             # We use the open3d convienience operator "+" to combine two pointclouds
             stitched_pc = pc_tuple[0] + pc_tuple[1]
-            stitched_pc, _ =  stitched_pc.remove_statistical_outlier(25, 0.5)
+            # stitched_pc, _ =  stitched_pc.remove_statistical_outlier(25, 0.5)
             stitched_objects.append(stitched_pc)
-            # Now add BBBOXes for matched objects as well   
-            bbox = stitched_pc.get_minimal_oriented_bounding_box(robust=True)
-            bbox.color = (1, 0, 0)  # open3d RED
-            self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
+            # Now add BBBOXes for matched objects as well  
 
         self.final_pc_array.extend(stitched_objects)
         # Now self.final_pc_array includes all matched elements and nonmatched elements that were detected
@@ -278,9 +284,9 @@ class SegmentationMatcher:
         max_dist = 0.1
         print("estimating normals")
         self.global_pointclouds[0].estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.2, max_nn=50))
         self.global_pointclouds[1].estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.2, max_nn=50))
         print("aligning pointclouds")
         try:
             # use default colored icp parameters
@@ -301,7 +307,7 @@ class SegmentationMatcher:
         if visualize:
             o3d.visualization.draw_geometries([self.global_pointclouds[0], self.global_pointclouds[1]])
 
-    def create_pointcloud_array(self, color_image, depth_image, masks_tensor, transform, intrinsic, visualize=False):
+    def create_pointcloud_array(self, color_image, depth_image, masks_tensor, transform, intrinsic, visualize=False, subsampling_rate = 6):
         batch_size = masks_tensor.shape[0]
         color_image_list = np.reshape(color_image, (-1, 3))
         mask_list = masks_tensor.reshape(batch_size, 1, -1)
@@ -310,10 +316,10 @@ class SegmentationMatcher:
         xy_grid_np = xyz_tensor[:, 0:2, :].detach().cpu().numpy()
         # mask only the depth tensor, all else would be redundant
         masked_depth_image_list = depth_tensor.expand(batch_size, 1, -1) * mask_list
-        masked_depth_image_list = masked_depth_image_list[:, :, ::6]
+        masked_depth_image_list = masked_depth_image_list[:, :, ::subsampling_rate]
         # Need to subsample rest as well otherwise list-form indices do not correspond anymore
-        color_image_list = color_image_list[::6, :]
-        xy_grid_np = xy_grid_np[:, :, ::6]
+        color_image_list = color_image_list[::subsampling_rate, :]
+        xy_grid_np = xy_grid_np[:, :, ::subsampling_rate]
         pointclouds = []
         masked_depth_image_list_np = masked_depth_image_list.detach().cpu().numpy()  # THIS IS THE BOTTLENECK!!!!
         # Next problem here: This length is static!
@@ -337,7 +343,7 @@ class SegmentationMatcher:
             pointcloud = pointcloud.crop(self.workspace)
             if len(pointcloud.points) > 10 and len(pointcloud.points) < 5000:
                 # print("total of ", len(pointcloud.points), " points")
-                pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=30, std_ratio=0.6)
+                pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=25, std_ratio=0.6)
                 pointclouds.append(pointcloud)
 
         # Visualize the point clouds (optional)
@@ -347,7 +353,7 @@ class SegmentationMatcher:
         if visualize:
             self.visualize_masked_tensor(color_image, masks_tensor)
             o3d.visualization.draw_geometries(pointclouds, width=1280, height=1280)
-            for pc in pointclouds:
-                 o3d.visualization.draw_geometries([pc])
+            # for pc in pointclouds:
+            #      o3d.visualization.draw_geometries([pc])
 
         return pointclouds

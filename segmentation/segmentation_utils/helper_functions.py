@@ -44,15 +44,17 @@ def get_bboxes_for_force_field(bbox, primitive, R, t, index):
     aligned_collision_object.header.frame_id = "panda_link0"
     transform = TransformStamped()
     # transform oriented bounding box to axis aligned bounding box with center at (0,0,0)
-    aligned_bounding_box = o3d.geometry.OrientedBoundingBox(bbox)
+    # aligned_bounding_box = o3d.geometry.OrientedBoundingBox(bbox)
+    aligned_bounding_box = bbox
     inv_R = np.transpose(R)
     aligned_bounding_box.rotate(R=inv_R)
     aligned_bounding_box.translate(-inv_R @ t, relative=True) # now the bbox should be axis aligned and centered at origin
     orientation = np.array(aligned_bounding_box.R)
+    orientation =np.eye(3,3)
     # In this quaternion we save the necessary transform to align the bounding box
     transform_quat = Rotation.from_matrix(inv_R).as_quat()
     # fill transform
-    position = aligned_bounding_box.center
+    position = aligned_bounding_box.get_center()
     transform.transform.translation.x , transform.transform.translation.y, transform.transform.translation.z = -inv_R @ t # we want the bbox at 0 0 0 but need the corresponding transform
     transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = transform_quat
     # fill pose
@@ -97,10 +99,15 @@ def add_mounting_table():
 def create_planning_scene_object_from_bbox(bboxes, id = "1"):
     transforms_msg = TFMessage()
     force_field_planning_scene = PlanningSceneWorld()
+    planner_planning_scene = PlanningSceneWorld()
+    monitored_planning_scene = PlanningScene()
     collision_objects = []
     for i, bbox in enumerate(bboxes):
         oriented_collision_object = CollisionObject()
         oriented_collision_object.header.frame_id = "panda_link0"
+        # if isinstance(bbox, o3d.geometry.AxisAlginedBoundingBox):
+        # R = np.eye(3,3)
+        # else:
         R = np.array(bbox.R) # Rotation Matrix of bounding box
         center = bbox.center
         sizes = bbox.extent
@@ -123,16 +130,19 @@ def create_planning_scene_object_from_bbox(bboxes, id = "1"):
         # fill axis aligned bounding boxes for Force field genreation
         aligned_bbox, ee_transform = get_bboxes_for_force_field(bbox, primitive, R, center, i)
         force_field_planning_scene.collision_objects.append(aligned_bbox)
+        planner_planning_scene.collision_objects.append(oriented_collision_object)
         transforms_msg.transforms.append(ee_transform)
     
     # get the mounting table in any case
     table_object, table_transform = add_mounting_table()
     collision_objects.append(table_object)
     force_field_planning_scene.collision_objects.append(table_object)
+    planner_planning_scene.collision_objects.append(table_object)
+    monitored_planning_scene.world = planner_planning_scene
     transforms_msg.transforms.append(table_transform)
 
         
-    return collision_objects, force_field_planning_scene, transforms_msg
+    return collision_objects, monitored_planning_scene, force_field_planning_scene, transforms_msg
 
 def show_input_images(color_image1, color_image2, depth_image1, depth_image2, save, dir):
         # color
