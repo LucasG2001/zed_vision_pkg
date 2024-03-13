@@ -134,13 +134,13 @@ class HandAveragerNode:
 
         # add hololens tracking for right hand
         if self.hololens_hand.isTracked:
-            right_avg.position.x += self.hololens_hand.position.x
-            right_avg.position.y += self.hololens_hand.position.y
-            right_avg.position.z += self.hololens_hand.position.z
+            right_avg.position.x += 6 * self.hololens_hand.position.x
+            right_avg.position.y += 6 * self.hololens_hand.position.y
+            right_avg.position.z += 6 * self.hololens_hand.position.z
 
-            right_avg.position.x /= (num_points + 1)
-            right_avg.position.y /= (num_points + 1)
-            right_avg.position.z /= (num_points + 1)
+            right_avg.position.x /= (num_points + 6)
+            right_avg.position.y /= (num_points + 6)
+            right_avg.position.z /= (num_points + 6)
 
             right_avg.orientation = self.hololens_hand.orientation
             print(f"right average orientation is{right_avg.orientation.x, right_avg.orientation.y, right_avg.orientation.z, right_avg.orientation.w}")

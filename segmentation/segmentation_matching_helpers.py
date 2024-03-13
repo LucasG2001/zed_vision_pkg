@@ -3,7 +3,7 @@ import numpy as np
 import open3d as o3d
 
 
-def compute_3d_iou(point_cloud_1: o3d.geometry.PointCloud, point_cloud_2: o3d.geometry.PointCloud, voxel_size=0.02):
+def compute_3d_iou(point_cloud_1: o3d.geometry.PointCloud, point_cloud_2: o3d.geometry.PointCloud, voxel_size=0.005):
     """
     Computes the 3D Intersection over Union (IOU) between two point cloud segmentation instances.
 
@@ -33,7 +33,6 @@ def compute_3d_iou(point_cloud_1: o3d.geometry.PointCloud, point_cloud_2: o3d.ge
     a = np.asarray([voxel.grid_index for voxel in voxels1])
     b = np.asarray([voxel.grid_index for voxel in voxels2])
     b = b + voxel_diff
-    # o3d.visualization.draw_geometries([voxel_grid1, voxel_grid2])
     # Convert voxel coordinates to strings for comparison This method works for intersection comparison, but somehow
     # both voxel grids are created in a local coordiante system
     # Compute intersection volume
@@ -99,9 +98,25 @@ def match_segmentations2D(mask_array1, mask_array2, id1, id2):
     return corresponding_ids
 
 
-def match_segmentations_3d(pc_arr_1, pc_arr_2, voxel_size, threshold=0.05):
+def match_segmentations_3d(pc_arr_1, pc_arr_2, voxel_size, threshold=0.05, visualize=False):
     # Iterate over each segmentation in image1 and find corresponding in image2
     # Calculate intersection over union (IoU) for all pairs of labels
+    voxels = []
+    if False:
+        for element in pc_arr_1:
+            colors = np.asarray(element.colors)
+            colors[:, 0] = 0 # no blue
+            element.colors = o3d.utility.Vector3dVector(colors)
+            voxel_grid1 = o3d.geometry.VoxelGrid.create_from_point_cloud(element, voxel_size)
+            voxels.append(voxel_grid1)
+        for element in pc_arr_2:
+            colors = np.asarray(element.colors)
+            colors[:, 1] = 0 #no green
+            element.colors = o3d.utility.Vector3dVector(colors) 
+            voxel_grid2 = o3d.geometry.VoxelGrid.create_from_point_cloud(element, voxel_size)
+            voxels.append(voxel_grid2)
+        o3d.visualization.draw_geometries(voxels, window_name="voxelized and colored scene")
+
     corresponding_indices_1 = []
     corresponding_indices_2 = []
     iou_matrix = np.zeros((len(pc_arr_1), len(pc_arr_2)))

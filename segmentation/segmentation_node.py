@@ -34,12 +34,12 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     # on topic /zed_multi/zed2i_long/zed_nodelet_front/left/camera_info or rear/left/camera_info respectively
     print("reading intrinsics")
     o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                       fx=533.77, fy=533.53,
-                                                       cx=661.87, cy=351.29)
+                                                       fx=521.07, fy=521.07,
+                                                       cx=679.06, cy=351.37)
 
     o3d_intrinsic2 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                       fx=534.28, fy=534.28,
-                                                       cx=666.59, cy=354.94)
+                                                       fx=536.68, fy=536.68,
+                                                       cx=658.39, cy=366.79)
     
 
     # TODO: scene and force_field publisher can be combined into one
@@ -117,7 +117,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 
     
                 
-                binary_mask_tensor, binary_mask_tensor2 = segmenter.segment_images(DEVICE, image_size=1024, confidence=0.6, iou=0.9)
+                binary_mask_tensor, binary_mask_tensor2 = segmenter.segment_images(DEVICE, image_size=1024, confidence=0.65, iou=0.6)
 
                 pc_start = time.time()
                 segmenter.pc_array_1 = segmenter.create_pointcloud_array(segmenter.color_images[0], segmenter.depth_images[0], binary_mask_tensor,
@@ -136,7 +136,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 segmenter.transform_pointclouds_icp(visualize=False)
                 print("transform took ", time.time()-transform_start)
 
-                correspondences, scores = segmenter.match_segmentations(voxel_size=0.06, threshold=0.001) 
+                correspondences, scores = segmenter.match_segmentations(voxel_size=0.03, threshold=0.001, visualize=False) 
                 print("Corrrespondence match at, ", time.time()-start, " seconds")
                 # Here we get the "stitched" objects matched by both cameras. In final_pc_array ALL objects (single-cam detected and matched) are saved
                 matched_objects = segmenter.stitch_scene(correspondences, scores, visualize=False)
@@ -145,6 +145,9 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 print("final pointclouds at, ", time.time()-start, " seconds")
                 pointclouds = segmenter.get_final_pointclouds()
                 bounding_boxes = segmenter.get_final_bboxes()
+                #visualization
+                #pointclouds.extend(bounding_boxes)
+                #o3d.visualization.draw_geometries(pointclouds)
                 print("Bounding boxes created at, ", time.time()-start, " seconds")
 
                 #publish planning scene
@@ -159,8 +162,6 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 transform_publisher.publish(transforms)
                 # print(f"recognized and matched {len(bounding_boxes)} objects")
                 # print("visualizing detected planning scene")
-                # pointclouds.extend(bounding_boxes)
-                # o3d.visualization.draw_geometries(pointclouds)
                 print("Everything took, ", time.time()-start, " seconds")
 
 

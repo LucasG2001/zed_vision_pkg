@@ -147,7 +147,7 @@ class SegmentationMatcher:
                                          (xyz_transformed > self.max_bound[:, np.newaxis, np.newaxis]), axis=0)
 
             # Set pixels to 0 in both the depth and color image where outside of bounds
-            # TODO: for some reason this does not blacken th eimage at all
+            # TODO: for some reason this does not blacken the image at all
             xyz_transformed[:, outside_bounds_mask] = 0
             self.depth_images[i][outside_bounds_mask] = 0
             self.color_images[i][outside_bounds_mask] = 0
@@ -216,14 +216,15 @@ class SegmentationMatcher:
             # create global pointclouds
             self.global_pointclouds[i].points = o3d.utility.Vector3dVector(global_points_3d)
             self.global_pointclouds[i].colors = o3d.utility.Vector3dVector(color_image.reshape(-1, 3) / 255.0)
-            self.global_pointclouds[i].uniform_down_sample(every_k_points=7)
+            self.global_pointclouds[i].uniform_down_sample(every_k_points=4)
             self.global_pointclouds[i].transform(transform)
             # crop pointcloud to region a bit bigger than workspace
-            min_bound = np.array([-0.1, -1.5, -0.4])
-            max_bound = np.array([1.5, 1.5, 0.9])
+            min_bound = np.array([-0.00, -0.6, -0.05])
+            max_bound = np.array([0.8, 0.6, 0.25])
             # Create an axis-aligned bounding box
             cropspace = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
             self.global_pointclouds[i] = self.global_pointclouds[i].crop(cropspace)
+            self.global_pointclouds[i] = self.global_pointclouds[i].voxel_down_sample(voxel_size=0.005)
             self.global_pointclouds[i], _ = self.global_pointclouds[i].remove_statistical_outlier(nb_neighbors=30,
                                                                                                   std_ratio=0.6)
 
@@ -239,18 +240,21 @@ class SegmentationMatcher:
             if visualize:
                 o3d.visualization.draw_geometries([pc])
 
-    def match_segmentations(self, voxel_size=0.05, threshold=0.0):
+    def match_segmentations(self, voxel_size=0.05, threshold=0.0, visualize=False):
         start = time.time()
         correspondences, scores, indx1, indx2 = match_segmentations_3d(self.pc_array_1, self.pc_array_2,
                                                                        voxel_size=voxel_size,
-                                                                       threshold=threshold)
+                                                                       threshold=threshold, visualize=visualize)
         
         print(f'matching took {time.time()-start} seconds')
         # delete matched objects from single-detection list
         for i, element in enumerate(self.pc_array_1):
             if i not in indx1:
                 # element, _ =  element.remove_statistical_outlier(25, 0.5)
-                self.final_pc_array.append(element)    
+                # !!!
+                # temporary inverse tranform because cam1 has better pointclou than point 2!    
+                # !!!
+                self.final_pc_array.append(element.transform(np.linalg.inv(self.icp.transformation)))    
         
         for i, element in enumerate(self.pc_array_2):
             if i not in indx2:
@@ -265,7 +269,7 @@ class SegmentationMatcher:
             # We use the open3d convienience operator "+" to combine two pointclouds
             stitched_pc = pc_tuple[0] + pc_tuple[1]
             # stitched_pc, _ =  stitched_pc.remove_statistical_outlier(25, 0.5)
-            stitched_objects.append(stitched_pc)
+            stitched_objects.append(stitched_pc.transform(np.linalg.inv(self.icp.transformation)))
             # Now add BBBOXes for matched objects as well  
 
         self.final_pc_array.extend(stitched_objects)
@@ -281,12 +285,12 @@ class SegmentationMatcher:
     def get_icp_transform(self, visualize=False):
         # ToDo: (Here or in other function) -> take correspondences and create single pointcloud
         #  out of them for ROS publishing
-        max_dist = 0.1
+        max_dist = 0.03
         print("estimating normals")
         self.global_pointclouds[0].estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.2, max_nn=50))
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.3, max_nn=50))
         self.global_pointclouds[1].estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.2, max_nn=50))
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.3, max_nn=50))
         print("aligning pointclouds")
         try:
             # use default colored icp parameters
@@ -341,9 +345,9 @@ class SegmentationMatcher:
             pointcloud.transform(transform)
             # Crop points not contined in the relevant workspace
             pointcloud = pointcloud.crop(self.workspace)
-            if len(pointcloud.points) > 10 and len(pointcloud.points) < 5000:
+            if len(pointcloud.points) > 30 and len(pointcloud.points) < 15000:
                 # print("total of ", len(pointcloud.points), " points")
-                pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=25, std_ratio=0.6)
+                pointcloud, _ = pointcloud.remove_statistical_outlier(nb_neighbors=25, std_ratio=1.5)
                 pointclouds.append(pointcloud)
 
         # Visualize the point clouds (optional)

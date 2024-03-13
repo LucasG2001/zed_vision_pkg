@@ -141,6 +141,7 @@ if __name__ == "__main__":
     # Create a InitParameters object and set configuration parameters
     init_params = sl.InitParameters()
     init_params.camera_resolution = sl.RESOLUTION.HD720  # Use 720 video mode
+    init_params.camera_fps = 60
     init_params.coordinate_units = sl.UNIT.METER  # Set coordinate units
     init_params.coordinate_system = sl.COORDINATE_SYSTEM.IMAGE
     init_params.set_from_serial_number(int(serial_number)) #34783283
@@ -176,13 +177,15 @@ if __name__ == "__main__":
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
-    body_runtime_param.detection_confidence_threshold = 70 #confidence threshold actually doesnt work
+    body_runtime_param.detection_confidence_threshold = 70 #confidence threshold actually works
     #TODO @ Accenture: Does your confidence threshold actually work?
 
     
 
     # Get ZED camera information
     camera_info = zed.get_camera_information()
+    left_cam = camera_info.camera_configuration.calibration_parameters.left_cam
+    print(f"intrinsics are {left_cam.fx, left_cam.fx, left_cam.cx, left_cam.cy}")
 
     # 2D viewer utilities
     display_resolution = sl.Resolution(min(camera_info.camera_configuration.resolution.width, 1280),
@@ -231,7 +234,7 @@ if __name__ == "__main__":
         confidences = []
         detected_body_list = []
 
-        print("body lenght befor deletion is ", len(bodies.body_list))
+        # print("body lenght befor deletion is ", len(bodies.body_list))
 
         # filter bodies by confidence
         for element in bodies.body_list:
@@ -270,10 +273,10 @@ if __name__ == "__main__":
         right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
         left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
         ####
-        left_hand_msg.x = left_wrist_transformed[0]   
+        left_hand_msg.x = left_wrist_transformed[0] - 0.12
         left_hand_msg.y = left_wrist_transformed[1]     
         left_hand_msg.z = left_wrist_transformed[2]     
-        right_hand_msg.x = right_wrist_transformed[0]    
+        right_hand_msg.x = right_wrist_transformed[0] - 0.12
         right_hand_msg.y = right_wrist_transformed[1]
         right_hand_msg.z = right_wrist_transformed[2]
         # publish positions of the two hands
