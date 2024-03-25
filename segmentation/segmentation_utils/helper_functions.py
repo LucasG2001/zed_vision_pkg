@@ -79,14 +79,14 @@ def add_mounting_table():
     table.header.frame_id = "panda_link0"
     transform = TransformStamped()
     pose = Pose()
-    pose.position.x, pose.position.y, pose.position.z = [0.45, 0.3, -0.02]  # pose of table center 
+    pose.position.x, pose.position.y, pose.position.z = [0.55, 0.3, -0.02]  # pose of table center 
     pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w = [0, 0, 0, 1]
     # fill collision object
     table.id = "mounting_table"
     # create corresponding primitive 
     primitive = SolidPrimitive()
     primitive.type = SolidPrimitive.BOX
-    primitive.dimensions = [0.9, 1.5, 0.04]
+    primitive.dimensions = [0.8, 1.5, 0.04]
     table.primitives.append(primitive)
     table.primitive_poses.append(pose)
     table.operation = CollisionObject.ADD

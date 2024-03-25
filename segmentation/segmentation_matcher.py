@@ -65,8 +65,8 @@ class SegmentationMatcher:
             bbox = element.get_oriented_bounding_box()
             # bbox = element.get_axis_aligned_bounding_box()
             bbox.color = (1, 0, 0)  # open3d RED
-            if (bbox.volume() <= 0.2 * 0.2 * 0.2):
-                self.final_bboxes.append(bbox) # here bbox center is not 0 0 0
+            if (bbox.volume() <= 0.2 * 0.2 * 0.2 and bbox.center[2] < 0.25):
+                self.final_bboxes.append(bbox)
         return self.final_bboxes
 
     def set_camera_params(self, intrinsics, transforms):
@@ -220,7 +220,7 @@ class SegmentationMatcher:
             self.global_pointclouds[i].transform(transform)
             # crop pointcloud to region a bit bigger than workspace
             min_bound = np.array([-0.00, -0.6, -0.05])
-            max_bound = np.array([0.8, 0.6, 0.25])
+            max_bound = np.array([0.72, 0.6, 0.25])
             # Create an axis-aligned bounding box
             cropspace = o3d.geometry.AxisAlignedBoundingBox(min_bound, max_bound)
             self.global_pointclouds[i] = self.global_pointclouds[i].crop(cropspace)
@@ -252,7 +252,7 @@ class SegmentationMatcher:
             if i not in indx1:
                 # element, _ =  element.remove_statistical_outlier(25, 0.5)
                 # !!!
-                # temporary inverse tranform because cam1 has better pointclou than point 2!    
+                # temporary inverse tranform because cam1 has better pointcloud than point 2!    
                 # !!!
                 self.final_pc_array.append(element.transform(np.linalg.inv(self.icp.transformation)))    
         
@@ -285,7 +285,7 @@ class SegmentationMatcher:
     def get_icp_transform(self, visualize=False):
         # ToDo: (Here or in other function) -> take correspondences and create single pointcloud
         #  out of them for ROS publishing
-        max_dist = 0.03
+        max_dist = 0.07
         print("estimating normals")
         self.global_pointclouds[0].estimate_normals(
             search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.3, max_nn=50))

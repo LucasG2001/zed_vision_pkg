@@ -46,7 +46,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     scene_publisher = rospy.Publisher("/collision_object", CollisionObject, queue_size=1) # adds object to the planning scene
     force_field_publisher = rospy.Publisher("/force_bboxes", PlanningSceneWorld, queue_size=1) # publishes planning scene to force field generation node
     transform_publisher = rospy.Publisher("/ee_transforms", TFMessage, queue_size=1)
-    moveit_planning_scene_publisher = rospy.Publisher("/move_group/monitored_planning_scene", PlanningScene, queue_size=1)
+    moveit_planning_scene_publisher = rospy.Publisher("/segmented_planning_scene", PlanningScene, queue_size=1)
     image_subscriber = image_subscriber()
     run_segmentation = False
     depth_images = []
