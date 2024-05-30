@@ -21,7 +21,7 @@ def compute_3d_iou(point_cloud_1: o3d.geometry.PointCloud, point_cloud_2: o3d.ge
     center2 = point_cloud_2.get_center()
     difference = center2 - center1
     # if object pointcloud centers are further away than 0.4m then return 0 IOU
-    if (np.linalg.norm(difference) > 0.6):
+    if (np.linalg.norm(difference) > 0.4):
         return 0
     voxel_diff = np.round((difference/voxel_size), decimals=0).astype(int)
     voxel_size = voxel_size  # Adjust voxel size as needed

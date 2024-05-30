@@ -2,7 +2,7 @@
     <!-- Arguments -->
     <arg name="yaml_file" default="$(find zed_vision)/scripts/transforms.yaml" />
     <arg name="transform_name" default="H1" />
-    <arg name="serial_number" default="32689769" />
+    <arg name="serial_number" default="38580376" />
     <arg name="visualize" default="True" />
     <arg name="camera_number" default="1" />
     
@@ -21,7 +21,7 @@
     <node pkg="zed_vision" type="body_tracking_multicam.py" name="body_tracking_node_2" output="screen">
         <param name="yaml_file" value="$(arg yaml_file)" />
         <param name="transform_name" value="H2" />
-        <param name="serial_number" value="34783283" />
+        <param name="serial_number" value="30635524" />
         <param name="visualize" value="" />
         <param name="camera_number" value="2" />
     </node>

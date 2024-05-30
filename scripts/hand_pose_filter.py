@@ -35,7 +35,7 @@ class HandAveragerNode:
         # TODO: filter not on callback reception but at the end - else causes massiv ealisasing at 30 HZ publishing
         # frequency of bodytracking nodes
         self.hololens_hand = HololensHand()
-        self.camera_list = ["32689769", "34783283"]
+        self.camera_list = ["38580376", "30635524"]
 
         # Publisher
         self.left_hand_pub = rospy.Publisher('cartesian_impedance_controller/left_hand', Pose, queue_size=1)
@@ -49,7 +49,7 @@ class HandAveragerNode:
         self.vright = np.array([0, 0, 0])
         self.right_estimate = np.array([0, 0, 0])
         self.left_estimate = np.array([0, 0, 0])
-        self.frequency = 80
+        self.frequency = 50
         self.dt = 1.0/self.frequency
 
         #Variable to stor filtered avg data

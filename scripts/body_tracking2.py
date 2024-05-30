@@ -177,7 +177,7 @@ if __name__ == "__main__":
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
-    body_runtime_param.detection_confidence_threshold = 0.95 #confidence threshold actually doesnt work
+    body_runtime_param.detection_confidence_threshold = 0.75
     #TODO @ Accenture: Does your confidence threshold actually work?
 
     

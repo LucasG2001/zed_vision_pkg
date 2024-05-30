@@ -11,12 +11,12 @@ class image_subscriber():
 
         self.bridge = CvBridge()        
         # TODO: Add second depth subscriber after finally using both ZED cams
-        rospy.Subscriber("/depth_image34783283", Image, self.depth_callback, 1)
-        rospy.Subscriber("/color_image34783283", Image, self.image_callback, 1)
+        rospy.Subscriber("/depth_image38580376", Image, self.depth_callback, 0)
+        rospy.Subscriber("/color_image38580376", Image, self.image_callback, 0)
 
         # ATTENTION: depending on the zed2i.yaml file for the zed configuration parameters the images will be downsampled to lower resolutions
-        rospy.Subscriber("/depth_image32689769", Image, self.depth_callback, 0)
-        rospy.Subscriber("/color_image32689769", Image, self.image_callback, 0)
+        rospy.Subscriber("/depth_image30635524", Image, self.depth_callback, 1)
+        rospy.Subscriber("/color_image30635524", Image, self.image_callback, 1)
         self.color_images = [0, 0]
         self.depth_images = [0, 0]
      

@@ -34,12 +34,12 @@ if __name__ == "__main__": # This is not a function but an if clause !!
     # on topic /zed_multi/zed2i_long/zed_nodelet_front/left/camera_info or rear/left/camera_info respectively
     print("reading intrinsics")
     o3d_intrinsic1 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                       fx=521.07, fy=521.07,
-                                                       cx=679.06, cy=351.37)
+                                                       fx=544.123, fy=544.123,
+                                                       cx=651.8, cy=389.6)
 
     o3d_intrinsic2 = o3d.camera.PinholeCameraIntrinsic(width=1280, height=720,
-                                                       fx=536.68, fy=536.68,
-                                                       cx=658.39, cy=366.79)
+                                                       fx=522.73, fy=522.73,
+                                                       cx=631.12, cy=355.76)
     
 
     # TODO: scene and force_field publisher can be combined into one
@@ -96,7 +96,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
             show_input_images(color_image1, color_image2, depth_image1, depth_image2, save=True, dir=script_directory)
             segmenter.set_images([color_image1, color_image2], [depth_image1, depth_image2])
             segmenter.generate_global_pointclouds(visualize=True)
-            segmenter.get_icp_transform(visualize=True)
+            # segmenter.get_icp_transform(visualize=True)
             segmenter.preprocessImages(visualize=True) 
             while(True):
                 start = time.time()
@@ -113,6 +113,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 segmenter.pc_array_1.clear()
                 segmenter.pc_array_2.clear()
                 segmenter.final_pc_array.clear()
+                segmenter.final_bboxes.clear()
                 segmenter.final_bboxes.clear()
                 
     
@@ -133,7 +134,7 @@ if __name__ == "__main__": # This is not a function but an if clause !!
                 print("Pointcloud generation took, ", time.time()-pc_start, " seconds")
 
                 transform_start = time.time()
-                segmenter.transform_pointclouds_icp(visualize=False)
+                # segmenter.transform_pointclouds_icp(visualize=False)
                 print("transform took ", time.time()-transform_start)
 
                 correspondences, scores = segmenter.match_segmentations(voxel_size=0.03, threshold=0.001, visualize=False) 

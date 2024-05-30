@@ -273,10 +273,10 @@ if __name__ == "__main__":
         right_wrist_transformed = np.matmul(Transform, np.append(right_wrist, [1], axis=0))[:3, ]
         left_wrist_transformed = np.matmul(Transform, np.append(left_wrist, [1], axis=0))[:3, ]
         ####
-        left_hand_msg.x = left_wrist_transformed[0] - 0.12
+        left_hand_msg.x = left_wrist_transformed[0] - 0.0
         left_hand_msg.y = left_wrist_transformed[1]     
         left_hand_msg.z = left_wrist_transformed[2]     
-        right_hand_msg.x = right_wrist_transformed[0] - 0.12
+        right_hand_msg.x = right_wrist_transformed[0] - 0.0
         right_hand_msg.y = right_wrist_transformed[1]
         right_hand_msg.z = right_wrist_transformed[2]
         # publish positions of the two hands
