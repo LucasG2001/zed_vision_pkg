@@ -144,8 +144,8 @@ if __name__ == "__main__":
     init_params.camera_resolution = sl.RESOLUTION.HD720  # Use 720 video mode
     init_params.coordinate_units = sl.UNIT.METER  # Set coordinate units
     init_params.coordinate_system = sl.COORDINATE_SYSTEM.IMAGE
-    init_params.set_from_serial_number(int(serial_number)) #34783283
-    init_params.depth_mode = sl.DEPTH_MODE.NEURAL
+    init_params.set_from_serial_number(int(serial_number)) 
+    init_params.depth_mode = sl.DEPTH_MODE.NEURAL_PLUS
 
     
     # Open the camera
@@ -171,17 +171,14 @@ if __name__ == "__main__":
     body_param = sl.BodyTrackingParameters()
     body_param.enable_tracking = True  # Track people across images flow
     body_param.enable_body_fitting = True  # Smooth skeleton move
-    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_FAST
+    body_param.detection_model = sl.BODY_TRACKING_MODEL.HUMAN_BODY_MEDIUM
     body_param.body_format = sl.BODY_FORMAT.BODY_38  # Choose the BODY_FORMAT you wish to use
     # Enable Object Detection module
     zed.enable_body_tracking(body_param)
 
     body_runtime_param = sl.BodyTrackingRuntimeParameters()
     body_runtime_param.detection_confidence_threshold = 0.75
-    #TODO @ Accenture: Does your confidence threshold actually work?
-
-    
-
+   
     # Get ZED camera information
     camera_info = zed.get_camera_information()
 

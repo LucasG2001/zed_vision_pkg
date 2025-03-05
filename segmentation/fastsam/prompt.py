@@ -7,15 +7,6 @@ import torch
 from .utils import image_to_np_ndarray
 from PIL import Image
 
-try:
-    import clip  # for linear_assignment
-
-except (ImportError, AssertionError, AttributeError):
-    from ultralytics.yolo.utils.checks import check_requirements
-
-    check_requirements('git+https://github.com/openai/CLIP.git')  # required before installing lap from source
-    import clip
-
 
 class FastSAMPrompt:
 
@@ -60,7 +51,7 @@ class FastSAMPrompt:
             annotations.append(annotation)
         return annotations
 
-    def filter_masks(self, annotations):  # filte the overlap mask
+    def filter_masks(annotations):  # filte the overlap mask
         annotations.sort(key=lambda x: x['area'], reverse=True)
         to_remove = set()
         for i in range(0, len(annotations)):
@@ -103,11 +94,7 @@ class FastSAMPrompt:
              withContours=True) -> np.ndarray:
         if isinstance(annotations[0], dict):
             annotations = [annotation['segmentation'] for annotation in annotations]
-        if isinstance(self.img, list):
-            print("self.img is a list")
-            image = self.img[0]
-        else:
-            image = self.img
+        image = self.img
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         original_h = image.shape[0]
         original_w = image.shape[1]
@@ -142,8 +129,7 @@ class FastSAMPrompt:
             )
         else:
             if isinstance(annotations[0], np.ndarray):
-                annotation_array = np.stack(annotations)
-                annotations = torch.from_numpy(annotation_array)
+                annotations = torch.from_numpy(annotations)
             self.fast_show_mask_gpu(
                 annotations,
                 plt.gca(),
@@ -345,6 +331,16 @@ class FastSAMPrompt:
     @torch.no_grad()
     def retrieve(self, model, preprocess, elements, search_text: str, device) -> int:
         preprocessed_images = [preprocess(image).to(device) for image in elements]
+        try:
+           import clip  # for linear_assignment
+    
+        except (ImportError, AssertionError, AttributeError):
+           from ultralytics.yolo.utils.checks import check_requirements
+    
+           check_requirements('git+https://github.com/openai/CLIP.git')  # required before installing lap from source
+           import clip
+
+
         tokenized_text = clip.tokenize([search_text]).to(device)
         stacked_images = torch.stack(preprocessed_images)
         image_features = model.encode_image(stacked_images)

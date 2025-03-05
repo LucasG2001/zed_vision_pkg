@@ -1,7 +1,6 @@
 from .model import FastSAM
 import numpy as np
 from PIL import Image
-import clip
 from typing import Optional, List, Tuple, Union
 
 
@@ -62,8 +61,8 @@ class FastSAMDecoder:
     def box_prompt(self, bbox):
         assert (bbox[2] != 0 and bbox[3] != 0)
         masks = self.image_embedding.masks.data
-        target_height = self.ori_img.shape[0]
-        target_width = self.ori_img.shape[1]
+        target_height = self.image.shape[0]
+        target_width = self.image.shape[1]
         h = masks.shape[1]
         w = masks.shape[2]
         if h != target_height or w != target_width:
@@ -91,9 +90,9 @@ class FastSAMDecoder:
 
     def point_prompt(self, points, pointlabel):  # numpy 
 
-        masks = self._format_results(self.results[0], 0)
-        target_height = self.ori_img.shape[0]
-        target_width = self.ori_img.shape[1]
+        masks = self._format_results(self.image_embedding[0], 0)
+        target_height = self.image.shape[0]
+        target_width = self.image.shape[1]
         h = masks[0]['segmentation'].shape[0]
         w = masks[0]['segmentation'].shape[1]
         if h != target_height or w != target_width:
